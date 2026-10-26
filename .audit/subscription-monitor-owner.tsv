@@ -1,0 +1,5 @@
+ts	phase	decision	why	evidence	result
+2026-10-26T21:00:00-03:00	start	Implement only in assigned t3-2a51ca0c worktree	Parent owns integration and independent review	10d64e5328fdde28800d54e9118ff70f25f369b3	HEAD verified; clean tree
+2026-10-26T21:00:01-03:00	design	Use approved separate command and flat internal package	Keep native credential renewal and proxy runtime outside monitor	SUBSCRIPTION_MONITOR_DESIGN.md	approved contract adopted
+2026-10-26T20:16:00.618573-03:00	trail	Supersede initial two row timestamps; they were placeholders	Use observed local time in all new rows	.audit/subscription-monitor-owner.tsv	initial decisions true; timestamps not measured
+2026-10-26T20:19:07.423891-03:00	domain	Add typed reading/missing outcomes and compatible window histories	Zero and missing must remain distinct; uncertain deltas stay unattributed	internal/submon/analytics_test.go	focused tests pass; server builds; deslop complete

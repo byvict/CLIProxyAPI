@@ -1,0 +1,15 @@
+{
+  "api_key": "fixture-minted-secret",
+  "user_email": "  Fixture-Muse@Example.test ",
+  "subs_usage": {
+    "window": {
+      "window_duration_mins": 300,
+      "used_percent": 28,
+      "resets_at": 1800003600
+    },
+    "weekly": {
+      "used_percent": 29,
+      "resets_at": 1800500000
+    }
+  }
+}

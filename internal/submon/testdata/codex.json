@@ -1,0 +1,15 @@
+{
+  "plan_type": "fixture-pro",
+  "rate_limit": {
+    "primary_window": {
+      "used_percent": 20,
+      "reset_at": 1800003600,
+      "limit_window_seconds": 18000
+    },
+    "secondary_window": {
+      "used_percent": null,
+      "reset_at": 1800500000,
+      "limit_window_seconds": 604800
+    }
+  }
+}
