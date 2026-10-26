@@ -1,9 +1,15 @@
 package submon
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
+	"io"
+	"net/http"
 	"os"
+	"strings"
 	"testing"
+	"time"
 )
 
 func fixture(t *testing.T, name string) []byte {
@@ -80,5 +86,94 @@ func TestNativeAccountIdentity(t *testing.T) {
 	}
 	if _, err := parseCredential(grok, []byte(`{"https://accounts.x.ai/sign-in":{"auth_mode":"api_key","key":"fixture-secret"}}`)); err == nil {
 		t.Fatal("API key became subscription")
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+func TestClaudeProfileAndUsageUseOneCredentialSnapshot(t *testing.T) {
+	calls := 0
+	reads := 0
+	n := nativeAccess{getenv: func(k string) string { return "" }, lookup: func(string) (string, bool) { return "", false }, platform: "darwin", home: "/fixture", keychain: func(context.Context, string, string) ([]byte, error) {
+		reads++
+		return []byte(`{"claudeAiOauth":{"accessToken":"fixture-access-secret"}}`), nil
+	}}
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if _, deadline := r.Context().Deadline(); deadline {
+			t.Error("quota deadline")
+		}
+		if r.Header.Get("Authorization") != "Bearer fixture-access-secret" {
+			t.Error("credential mismatch")
+		}
+		calls++
+		name := "claude.json"
+		if strings.HasSuffix(r.URL.Path, "profile") {
+			name = "claude-profile.json"
+		}
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(bytes.NewReader(fixture(t, name))), Header: http.Header{}}, nil
+	})}
+	p := (quotaReader{native: n, client: client}).probe(probeContext{Context: context.Background(), Now: testTime}, claude)
+	if _, valid := p.Outcome.(reading); !valid || calls != 2 || reads != 1 {
+		t.Fatalf("probe %T; calls %d reads %d", p.Outcome, calls, reads)
+	}
+}
+func TestQuotaTransportAndSanitizedErrors(t *testing.T) {
+	c := quotaClient()
+	tr := c.Transport.(*http.Transport)
+	if c.Timeout != 0 || tr.ResponseHeaderTimeout != 0 || tr.TLSHandshakeTimeout != 0 || tr.IdleConnTimeout != 0 {
+		t.Fatal("quota timeout")
+	}
+	r := quotaReader{client: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: 429, Header: http.Header{"Retry-After": []string{"3600"}}, Body: io.NopCloser(strings.NewReader(`fixture-private-secret`))}, nil
+	})}}
+	_, m := r.request(context.Background(), testTime(), "https://fixture.test/quota", "fixture-token", nil, false)
+	if m == nil || m.Status != rateLimited || !m.RetryAt.Equal(testTime().Add(time.Hour)) {
+		t.Fatal("backoff", m)
+	}
+	b, _ := json.Marshal(m)
+	if bytes.Contains(b, []byte("fixture-private-secret")) {
+		t.Fatal("raw error leaked")
+	}
+}
+func TestSupportedNativeLocations(t *testing.T) {
+	env := map[string]string{"CODEX_HOME": "/native/codex", "CLAUDE_CONFIG_DIR": "/native/claude", "MUSE_AUTH_PATH": "/native/muse.json"}
+	paths := []string{}
+	n := nativeAccess{home: "/native/home", getenv: func(k string) string { return env[k] }, lookup: func(k string) (string, bool) { v, ok := env[k]; return v, ok }, platform: "linux", readFile: func(path string) ([]byte, error) {
+		paths = append(paths, path)
+		if strings.Contains(path, "codex") {
+			return fixture(t, "codex-auth.json"), nil
+		}
+		if strings.Contains(path, "claude") {
+			return []byte(`{"claudeAiOauth":{"accessToken":"fixture"}}`), nil
+		}
+		return []byte(`{"providers":{"meta":{"mechanism":"oauth","access_token":"fixture"}}}`), nil
+	}}
+	for _, p := range []provider{codex, claude, muse} {
+		if _, err := n.acquire(context.Background(), p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	expected := []string{"/native/codex/auth.json", "/native/claude/.credentials.json", "/native/muse.json"}
+	for i, path := range paths {
+		if path != expected[i] {
+			t.Fatal("wrong active location", paths)
+		}
+	}
+	_, service := n.claudeLocation()
+	if service == "Claude Code-credentials" {
+		t.Fatal("profile service not isolated")
+	}
+	env["CLAUDE_SECURESTORAGE_CONFIG_DIR"] = ""
+	_, service = n.claudeLocation()
+	if service != "Claude Code-credentials" {
+		t.Fatal("explicit default secure storage ignored")
+	}
+}
+
+func TestClaudeModelScopeWithProviderDisplayName(t *testing.T) {
+	windows, err := parseWindows(claude, []byte(`{"limits":[{"kind":"weekly_scoped","scope":{"model":{"id":null,"display_name":"Fable"}},"percent":33,"resets_at":null}]}`))
+	if err != nil || len(windows) != 1 || windows[0].Key.Scope != "provider-label:Fable" {
+		t.Fatalf("provider label scope rejected %v %+v", err, windows)
 	}
 }

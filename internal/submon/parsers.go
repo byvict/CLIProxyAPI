@@ -182,7 +182,7 @@ func parseWindows(p provider, b []byte) ([]windowReading, error) {
 		if err != nil {
 			return err
 		}
-		if seconds <= 0 || scope == "" {
+		if seconds < 0 || (seconds == 0 && kind != "monthly") || scope == "" {
 			return errShape
 		}
 		w := windowReading{Key: windowKey{Kind: kind, Scope: scope, PeriodSeconds: seconds, Unit: "percent", CapacityBasis: basis}, Label: label, Capacity: 100, Remaining: r, ResetsAt: reset}
@@ -266,6 +266,9 @@ func parseWindows(p provider, b []byte) ([]windowReading, error) {
 			}
 			if l.Scope != nil {
 				scope = l.Scope.Model.ID
+				if scope == "" && l.Scope.Model.Name != "" {
+					scope = "provider-label:" + l.Scope.Model.Name
+				}
 				if scope == "" {
 					return nil, errShape
 				}
@@ -299,9 +302,8 @@ func parseWindows(p provider, b []byte) ([]windowReading, error) {
 		kind, label, seconds := "weekly", "semanal", int64(604800)
 		if l.Period.Type == "USAGE_PERIOD_TYPE_MONTHLY" {
 			kind, label, seconds = "monthly", "mensal", 0
-			return nil, errShape
 		}
-		if l.Period.Type != "USAGE_PERIOD_TYPE_WEEKLY" {
+		if l.Period.Type != "USAGE_PERIOD_TYPE_WEEKLY" && l.Period.Type != "USAGE_PERIOD_TYPE_MONTHLY" {
 			return nil, errShape
 		}
 		if err := add(kind, "all", label, "native-credits", seconds, l.Used, l.Period.End); err != nil {

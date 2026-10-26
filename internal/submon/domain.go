@@ -104,7 +104,6 @@ type source struct {
 	Probe    func(ctx probeContext) probe
 }
 
-// A probe receives the service lifecycle context, never a request deadline.
 type probeContext struct {
 	Context context.Context
 	Now     func() time.Time

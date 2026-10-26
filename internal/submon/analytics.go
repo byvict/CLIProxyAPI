@@ -30,10 +30,11 @@ type chartPoint struct {
 	Remaining *float64  `json:"remaining"`
 }
 type ratePoint struct {
-	From     time.Time `json:"from"`
-	To       time.Time `json:"to"`
-	PpH      float64   `json:"ppH"`
-	Coverage float64   `json:"coverage"`
+	BreakBefore bool      `json:"breakBefore"`
+	From        time.Time `json:"from"`
+	To          time.Time `json:"to"`
+	PpH         float64   `json:"ppH"`
+	Coverage    float64   `json:"coverage"`
 }
 type consumptionBin struct {
 	From           time.Time `json:"from"`
@@ -166,7 +167,17 @@ func analyze(input []sample, o analysisOptions) analysis {
 			a.Peak = &r
 		}
 	}
+	cycleStart := samples[len(samples)-1].At
+	for i := len(samples) - 1; i > 0; i-- {
+		if !continuous(samples[i-1], samples[i], maxGap) {
+			break
+		}
+		cycleStart = samples[i-1].At
+	}
 	lookbackStart := o.Now.Add(-o.Lookback)
+	if cycleStart.After(lookbackStart) {
+		lookbackStart = cycleStart
+	}
 	count := 0
 	consumed := 0.0
 	for _, d := range a.Intervals {
@@ -194,7 +205,6 @@ func analyze(input []sample, o analysisOptions) analysis {
 		a.Insufficient = "Leitura desatualizada ou ausente. Projeção suspensa."
 		return a
 	}
-	// A recent discontinuity cannot inherit a rate from a previous cycle.
 	continuousSeconds := time.Duration(0)
 	for i := len(samples) - 1; i > 0; i-- {
 		if !continuous(samples[i-1], samples[i], maxGap) {
@@ -303,7 +313,7 @@ func rollingRates(intervals []deltaInterval) []ratePoint {
 			}
 		}
 		if seconds > 0 {
-			out = append(out, ratePoint{From: from, To: last.To, PpH: consumed / (seconds / 3600), Coverage: fraction(seconds, 3600)})
+			out = append(out, ratePoint{From: from, To: last.To, PpH: consumed / (seconds / 3600), Coverage: fraction(seconds, 3600), BreakBefore: len(out) > 0 && last.From.After(out[len(out)-1].To)})
 		}
 	}
 	return out
