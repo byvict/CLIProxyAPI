@@ -88,6 +88,7 @@ func TestManagementV8IndependentContract(t *testing.T) {
 	for _, route := range []string{
 		"GET /v0/management/debug", "PUT /v0/management/request-retry", "GET /v0/management/auth-files",
 		"GET /v8/management/observability/logs", "GET /v8/management/observability/usage/queue",
+		"GET /v8/management/performance", "GET /v8/management/infra/github", "POST /v8/management/infra/github",
 		"GET /v8/management/credentials", "POST /v8/management/credentials",
 		"GET /v8/management/oauth/auth-url", "POST /v8/management/oauth/auth-url", "POST /v8/management/oauth/import", "POST /v8/management/oauth/callback",
 		"POST /v8/management/routing/cooldown/reset",
@@ -216,5 +217,26 @@ func TestManagementV8PluginOperationMigratesConfiguration(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("missing configuration reload")
+	}
+}
+
+func TestPerformanceRoutesRequireManagementAuthentication(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.RemoteManagement.SecretKey = "configured-key"
+	h := management.NewHandler(cfg, "", nil)
+	h.SetLocalPassword("test-password")
+	s := &Server{cfg: cfg, engine: gin.New(), mgmt: h}
+	s.managementRoutesEnabled.Store(true)
+	s.registerManagementV8Routes()
+	for _, route := range []struct{ method, path string }{
+		{"GET", "/v8/management/performance"}, {"GET", "/v8/management/infra/github"}, {"POST", "/v8/management/infra/github"},
+	} {
+		request := httptest.NewRequest(route.method, route.path, strings.NewReader(`{"token":"test"}`))
+		request.RemoteAddr = "127.0.0.1:1234"
+		response := httptest.NewRecorder()
+		s.engine.ServeHTTP(response, request)
+		if response.Code != http.StatusUnauthorized {
+			t.Fatalf("%s: got %d", route.path, response.Code)
+		}
 	}
 }

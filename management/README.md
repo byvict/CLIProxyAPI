@@ -83,3 +83,47 @@ This check refreshes the selected Claude quota through the original reader, veri
 that the observation is saved, and inspects the visible projection and v1 charts.
 It allows only GET operations to the provider. It requires enough observed consumption
 for a finite estimate. The evidence directory contains screenshots of your account.
+
+## Performance and GitHub
+
+**Performance** follows **Quota Management** in the sidebar. Its **Todos**, **Claude**,
+**Codex**, **Grok**, and **Meta** tabs share the annual activity calendar and the
+30-day token and agent charts. **Todos** adds the four providers' counts and tokens.
+Streaks use the union of active days, and longest execution uses the maximum duration.
+
+The authenticated `GET /v8/management/performance` endpoint reads
+`~/.t3/userdata/statev2.sqlite` on the server in SQLite read-only mode. It reads v2
+provider-thread and provider-turn projections, without prompts or credentials.
+One agent means one recorded turn. Durations use completed turns. Tokens use
+`turnTokenUsage.inputTokens + turnTokenUsage.outputTokens`; cached input and
+reasoning are already included. Missing token reports remain unavailable, and
+partial reports have a visible coverage notice. Dates use `America/Sao_Paulo`.
+The page shows the first available record and does not infer activity from quotas.
+If T3code runs under another user or on another machine, the page reports that its
+local history is unavailable.
+
+**Infra** follows **AI Providers** and reuses its header, category list, and resource
+panel layout. It currently supports GitHub through the existing `server.github-token`
+configuration and environment fallback. `GET /v8/management/infra/github` validates
+the connection and returns the authenticated account's annual contribution calendar,
+PRs, reviews, and commits. `POST /v8/management/infra/github` accepts `{"token":"..."}`,
+validates the token with GitHub GraphQL, and saves it only after validation succeeds.
+These endpoints do not return the token. The form clears the token after a successful
+save and does not store it in browser storage. Private contribution visibility follows
+the token's permissions. GitHub activity belongs to the entire account and is not
+assigned to AI providers.
+
+The existing management key protects all three endpoints. Home mode disables these
+local management routes under the same policy as the rest of the v8 API.
+
+To check the built pages against an isolated proxy with an empty auth directory, run:
+
+```sh
+PLAYWRIGHT_MODULE=/absolute/playwright/index.mjs node scripts/performance-ui-check.mjs \
+  http://127.0.0.1:18327 /absolute/fixture /absolute/ui-evidence
+```
+
+The fixture directory must contain `management.key` for that proxy. The checker uses
+synthetic activity and GitHub responses. It verifies navigation order, all provider
+tabs, token coverage, connection validation, keyboard chart inspection, and mobile
+layout. Screenshots and `receipt.json` are saved in the evidence directory.
