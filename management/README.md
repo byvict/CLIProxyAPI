@@ -2,7 +2,7 @@
 
 This directory extends the complete upstream CLI Proxy API Management Center.
 `upstream.json` fixes its source revision. `refinements.patch` changes the existing
-navigation and quota timeline. `src/` hosts Quota History inside the same React app.
+navigation, compact quota cards, and quota timeline. `src/` hosts Quota History inside the same React app.
 All existing providers, OAuth, configuration, logs, and plugin pages remain in the build.
 
 Quota History reuses the v1 markup, CSS, chart renderer, filters, and keyboard
@@ -22,6 +22,22 @@ the refinements, and runs the complete frontend test suite, lint, and build.
 It produces the original single-file `management.html` deployment artifact.
 Keep `management.disable-auto-update-panel: true` when installing this artifact,
 so upstream automatic updates do not replace the fork.
+
+The committed patch includes the compact summaries for all four native providers,
+the shared dashed current-time line, provider logos and weekly balances, and the
+Codex reset-credit triangles. Build from these committed inputs. A previously
+installed HTML file can contain local changes that were never added to the patch.
+
+Check the summary cards in the built artifact with synthetic provider responses:
+
+```sh
+PLAYWRIGHT_MODULE=/absolute/playwright/index.mjs node scripts/compact-quota-ui-check.mjs \
+  http://127.0.0.1:18317 /absolute/management-build /absolute/card-evidence
+```
+
+This checker intercepts every browser request and loads the build's `dist/index.html`.
+It checks all four cards on desktop and mobile without using live credentials.
+The compact-card unit tests also run in every `scripts/build-management.sh` build.
 
 Build and run the proxy from this branch to provide the authenticated
 `GET` and `POST /v8/management/quota-history` endpoints, plus the read-only
@@ -68,7 +84,8 @@ PLAYWRIGHT_MODULE=/absolute/playwright/index.mjs node scripts/quota-history-ui-c
 ```
 
 The checker intercepts provider quota requests with synthetic responses. It checks
-all four colors with partial history, existing navigation, the v1 controls, and the
+all four colors with partial history, compact provider labels, the shared dashed
+time line, reset-credit triangles, existing navigation, the v1 controls, and the
 mobile layout. It also compares rendered panels and SVG charts against the original
 v1 at `http://127.0.0.1:8318` using identical data and width. Set `V1_REFERENCE_URL`
 to use another v1 server. Screenshots and `receipt.json` are written to the evidence directory.

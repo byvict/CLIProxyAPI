@@ -49,6 +49,11 @@ access:
             "refresh_token": "", "expired": "2099-01-01T00:00:00Z",
             "email": f"{name}@example.test", "account_uuid": f"fixture-{name}",
         }))
+    (root / "auths" / "codex-resets.json").write_text(json.dumps({
+        "type": "codex", "access_token": "synthetic-fixture-token",
+        "refresh_token": "", "expired": "2099-01-01T00:00:00Z",
+        "email": "resets@example.test", "account_id": "fixture-codex-resets",
+    }))
     print(root / "config.yaml")
 else:
     if not marker.is_file():
@@ -66,7 +71,8 @@ else:
     base = int(time.time() * 1000)
     fixtures = {}
     cases = {"before": (4, 1, "yellow"), "after": (34, 1, "blue"),
-             "green": (24, 1, "green"), "red": (20, 0.25, "red")}
+             "green": (24, 1, "green"), "red": (20, 0.25, "red"),
+             "codex-resets": (32, 1, "blue")}
     with sqlite3.connect(root / "quota-history.sqlite") as database:
         database.execute("DELETE FROM observations")
         if database.execute("SELECT name FROM sqlite_master WHERE name='polls'").fetchone():
@@ -80,15 +86,18 @@ else:
             if not index:
                 raise RuntimeError("Fixture credential has no auth index")
             reset = base + 24 * 3_600_000
+            provider = "codex" if case == "codex-resets" else "claude"
+            window_id = "weekly" if provider == "codex" else "seven-day"
             fixtures[index] = {"name": file["name"], "remaining": remaining,
-                               "rate": rate, "band": band, "reset": reset}
+                               "rate": rate, "band": band, "reset": reset,
+                               "provider": provider}
             points = args.history_hours * 12
             database.executemany('''INSERT INTO observations
                 (credential, provider, window_id, label, observed_at_ms,
                  remaining, reset_at_ms, period_hours) VALUES (?,?,?,?,?,?,?,?)''', [
-                (index, "claude", "seven-day", "7-day limit", base - (points-i)*300_000,
+                (index, provider, window_id, "7-day limit", base - (points-i)*300_000,
                  remaining + (points-i)*rate/12, reset, 168) for i in range(points+1)])
-    if len(fixtures) != 4:
-        raise RuntimeError("Expected four synthetic credentials")
+    if len(fixtures) != 5:
+        raise RuntimeError("Expected four Claude credentials and one Codex credential")
     (root / "fixtures.json").write_text(json.dumps({"base": base, "accounts": fixtures}))
     print(json.dumps({"seeded_credentials": len(fixtures), "observations": len(fixtures)*(args.history_hours*12+1)}))
