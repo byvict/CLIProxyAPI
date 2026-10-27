@@ -60,11 +60,11 @@ export function PerformancePage() {
       </nav>
       <main className={styles.content} aria-label={`Performance de ${providerNames[provider]}`}>
         <div className={styles.stats}>
-          <div title="Maior duração entre início e conclusão de um turno registrado no T3code.">
+          <div title="Maior duração entre início e conclusão de uma execução registrada.">
             <span>Maior execução</span>
             <strong>{selected ? duration(selected.total.longestDurationMs) : '—'}</strong>
           </div>
-          <div title="Cada turno registrado no T3code conta como uma execução de agente.">
+          <div title="Cada turno observado conta como uma execução. Chamadas sem início de turno não geram agentes.">
             <span>Agentes</span>
             <strong>{selected ? compact(selected.total.agents) : '—'}</strong>
           </div>
@@ -81,7 +81,7 @@ export function PerformancePage() {
           <div className={styles.sourceRow}>
             <div className={styles.sourceTabs} role="group" aria-label="Fonte da atividade">
               <button type="button" aria-pressed={source === 't3'} onClick={() => setSource('t3')}>
-                T3code
+                {activity?.historyImported ? 'T3code + CLIs' : 'T3code'}
               </button>
               <button
                 type="button"
@@ -93,7 +93,7 @@ export function PerformancePage() {
             </div>
             <span>
               {source === 't3' && activity && selected
-                ? `${selected.total.reportedAgents ? compact(selected.total.tokens) : '—'} tokens em ${activity.year}`
+                ? `${selected.total.reportedAgents || selected.total.tokenRecords ? compact(selected.total.tokens) : '—'} tokens em ${activity.year}`
                 : source === 'github' && githubActivity
                   ? `${number(githubActivity.contributions)} contribuições em ${githubActivity.year}`
                   : ''}
@@ -138,7 +138,7 @@ export function PerformancePage() {
                         value:
                           !activity.availableFrom ||
                           date < activity.availableFrom ||
-                          (day && !day.reportedAgents)
+                          (day && !day.reportedAgents && !day.tokenRecords)
                             ? null
                             : (day?.tokens ?? 0),
                       },
@@ -204,7 +204,7 @@ function TokenCharts({ activity, provider }: { activity: Activity; provider: Pro
   const selected = selectActivity(activity, provider);
   const recentTokens = selected.recent.reduce((sum, day) => sum + day.tokens, 0);
   const recentAgents = selected.recent.reduce((sum, day) => sum + day.agents, 0);
-  const hasTokens = selected.recent.some((day) => day.reportedAgents > 0);
+  const hasTokens = selected.recent.some((day) => day.reportedAgents > 0 || (day.tokenRecords ?? 0) > 0);
   return (
     <>
       <section className={styles.chartSection} aria-label="Tokens">
@@ -219,7 +219,7 @@ function TokenCharts({ activity, provider }: { activity: Activity; provider: Pro
             points={selected.recent.map((day) => ({
               date: day.date,
               value:
-                day.date < activity.availableFrom || (day.agents > 0 && !day.reportedAgents)
+                day.date < activity.availableFrom || (day.agents > 0 && !day.reportedAgents && !day.tokenRecords)
                   ? null
                   : day.tokens,
             }))}
@@ -234,7 +234,7 @@ function TokenCharts({ activity, provider }: { activity: Activity; provider: Pro
         <h2>Agentes</h2>
         <p className={styles.chartTotal}>{compact(recentAgents)} agentes</p>
         <div className={styles.legend}>
-          <i /> T3code ({compact(recentAgents)})
+          <i /> {activity.historyImported ? 'T3code + CLIs' : 'T3code'} ({compact(recentAgents)})
         </div>
         <ActivityChart
           unit="agentes"
@@ -250,6 +250,12 @@ function TokenCharts({ activity, provider }: { activity: Activity; provider: Pro
           ? `Histórico disponível desde ${shortDate(activity.availableFrom)}. `
           : 'Nenhuma execução registrada neste ano. '}
         Cada agente corresponde a um turno. Gráficos: últimos 30 dias, horário de São Paulo.
+        {activity.historyImported && (
+          <span className={styles.coverage}>
+            Histórico recuperado do T3code e dos CLIs. Chamadas com tokens sem início de turno
+            preservado entram no consumo, sem criar agentes. Leituras parciais continuam sinalizadas.
+          </span>
+        )}
         {selected.total.reportedAgents < selected.total.agents ||
         selected.total.partialAgents > 0 ? (
           <span className={styles.coverage}>

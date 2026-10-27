@@ -177,6 +177,12 @@ func MakeSnapshot(observations []Observation, credentials []Credential, now time
 		account := accounts[observation.Credential]
 		if account == nil {
 			account = &accountView{ID: observation.Credential, Provider: providerName(observation.Provider), Identity: identityView{Label: observation.Provider + " · " + observation.Credential}, Windows: []historyWindow{}, HistoryWindows: []historyWindow{}}
+			if strings.HasPrefix(observation.Credential, "codexbar:") {
+				account.Identity.Label = observation.Provider + " · CodexBar " + strings.TrimPrefix(observation.Credential, "codexbar:") + " · conta histórica"
+			}
+			if strings.HasPrefix(observation.Credential, "v1-account:") {
+				account.Identity.Label = observation.Provider + " · Monitor V1 " + strings.TrimPrefix(observation.Credential, "v1-account:") + " · conta histórica"
+			}
 			accounts[account.ID] = account
 		}
 		if latest[account.ID] == nil {

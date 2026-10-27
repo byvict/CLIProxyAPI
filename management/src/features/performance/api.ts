@@ -15,6 +15,7 @@ export interface ActivityDay {
   date: string;
   agents: number;
   tokens: number;
+  tokenRecords?: number;
   reportedAgents: number;
   partialAgents: number;
   longestDurationMs: number;
@@ -25,6 +26,7 @@ export interface Activity {
   today: string;
   generatedAt: string;
   availableFrom: string;
+  historyImported?: boolean;
   providers: { id: Exclude<Provider, 'all'>; days: ActivityDay[] }[];
 }
 export type PerformanceResponse =
@@ -60,6 +62,7 @@ function isActivityDay(value: unknown): value is ActivityDay {
     date(value.date) &&
     count(value.agents) &&
     count(value.tokens) &&
+    (value.tokenRecords === undefined || count(value.tokenRecords)) &&
     count(value.reportedAgents) &&
     count(value.partialAgents) &&
     count(value.longestDurationMs)
@@ -69,6 +72,7 @@ function isActivity(value: unknown): value is Activity {
   return (
     record(value) &&
     count(value.year) &&
+    (value.historyImported === undefined || typeof value.historyImported === 'boolean') &&
     typeof value.timezone === 'string' &&
     date(value.today) &&
     typeof value.generatedAt === 'string' &&

@@ -4,6 +4,7 @@ export const emptyDay = (date: string): ActivityDay => ({
   date,
   agents: 0,
   tokens: 0,
+  tokenRecords: 0,
   reportedAgents: 0,
   partialAgents: 0,
   longestDurationMs: 0,
@@ -21,6 +22,7 @@ export function selectActivity(activity: Activity, provider: Provider) {
       const total = byDate.get(day.date) ?? emptyDay(day.date);
       total.agents += day.agents;
       total.tokens += day.tokens;
+      total.tokenRecords = (total.tokenRecords ?? 0) + (day.tokenRecords ?? 0);
       total.reportedAgents += day.reportedAgents;
       total.partialAgents += day.partialAgents;
       total.longestDurationMs = Math.max(total.longestDurationMs, day.longestDurationMs);
@@ -33,6 +35,7 @@ export function selectActivity(activity: Activity, provider: Provider) {
       ...sum,
       agents: sum.agents + day.agents,
       tokens: sum.tokens + day.tokens,
+      tokenRecords: (sum.tokenRecords ?? 0) + (day.tokenRecords ?? 0),
       reportedAgents: sum.reportedAgents + day.reportedAgents,
       partialAgents: sum.partialAgents + day.partialAgents,
       longestDurationMs: Math.max(sum.longestDurationMs, day.longestDurationMs),
@@ -43,14 +46,15 @@ export function selectActivity(activity: Activity, provider: Provider) {
   let streak = 0;
   let previous = '';
   for (const day of days) {
-    if (!day.agents) continue;
+    if (!day.agents && !day.tokens) continue;
     streak = previous && addDays(previous, 1) === day.date ? streak + 1 : 1;
     longestStreak = Math.max(longestStreak, streak);
     previous = day.date;
   }
   let currentStreak = 0;
-  let cursor = byDate.get(activity.today)?.agents ? activity.today : addDays(activity.today, -1);
-  while (byDate.get(cursor)?.agents) {
+  const isActive = (date: string) => Boolean(byDate.get(date)?.agents || byDate.get(date)?.tokens);
+  let cursor = isActive(activity.today) ? activity.today : addDays(activity.today, -1);
+  while (isActive(cursor)) {
     currentStreak++;
     cursor = addDays(cursor, -1);
   }
