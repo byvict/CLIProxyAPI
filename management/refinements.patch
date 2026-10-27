@@ -13,7 +13,7 @@ index b58f97c..e7f2833 100644
 @@ -102,7 +103,7 @@ interface SidebarNavGroup {
  const flattenNavItems = (items: SidebarNavItem[]): SidebarNavLinkItem[] =>
    items.flatMap((item) => (item.kind === 'drawer' ? item.children : [item]));
- 
+
 -/** 点击菜单外或按下 Escape 时关闭弹出菜单 */
 +/** Close the popover on an outside click or Escape. */
  function useMenuDismiss(
@@ -59,19 +59,58 @@ index b58f97c..e7f2833 100644
              <PageTransition
                render={(location) => <MainRoutes location={location} />}
                getRouteOrder={getRouteOrder}
+diff --git a/src/features/quota/components/QuotaCard.tsx b/src/features/quota/components/QuotaCard.tsx
+index 64538b5..0a9b9a5 100644
+--- a/src/features/quota/components/QuotaCard.tsx
++++ b/src/features/quota/components/QuotaCard.tsx
+@@ -165,6 +165,7 @@ export function QuotaCard(props: QuotaCardProps) {
+           <adapter.Body
+             quota={quota}
+             classes={quotaClasses}
++            summary
+             planItems={claudePlanItems}
+             afterPlan={claudeAfterPlan}
+           />
+@@ -180,6 +181,7 @@ export function QuotaCard(props: QuotaCardProps) {
+           <adapter.Body
+             quota={quota}
+             classes={quotaClasses}
++            summary
+             planItems={claudePlanItems}
+             afterPlan={claudeAfterPlan}
+           />
 diff --git a/src/features/quota/components/QuotaTimeline.module.scss b/src/features/quota/components/QuotaTimeline.module.scss
-index 5cb3a81..a818a77 100644
+index 5cb3a81..25750a0 100644
 --- a/src/features/quota/components/QuotaTimeline.module.scss
 +++ b/src/features/quota/components/QuotaTimeline.module.scss
-@@ -155,6 +155,7 @@ $lane-width: 210px;
+@@ -101,6 +101,10 @@ $lane-width: 210px;
+   grid-template-columns: $lane-width 1fr;
  }
- 
+
++.lanes {
++  position: relative;
++}
++
+ .axis {
+   border-bottom: 1px solid var(--border-color);
+ }
+@@ -118,6 +122,7 @@ $lane-width: 210px;
+
+ .axisCells {
+   display: flex;
++  min-width: 0;
+ }
+
+ .axisCell {
+@@ -155,6 +160,7 @@ $lane-width: 210px;
+ }
+
  .lane {
 +  height: 64px;
    border-top: 1px solid var(--border-color);
- 
+
    &:hover {
-@@ -165,7 +166,7 @@ $lane-width: 210px;
+@@ -165,7 +171,7 @@ $lane-width: 210px;
  .laneHead {
    display: flex;
    flex-direction: column;
@@ -80,10 +119,28 @@ index 5cb3a81..a818a77 100644
    padding: 9px 12px;
    min-width: 0;
  }
-@@ -194,35 +195,6 @@ $lane-width: 210px;
+@@ -177,12 +183,12 @@ $lane-width: 210px;
+   min-width: 0;
+ }
+
+-.laneDot {
++.laneIcon {
+   flex: none;
+-  width: 7px;
+-  height: 7px;
+-  border-radius: 50%;
+-  background: var(--provider-accent, var(--text-quaternary));
++  width: 16px;
++  height: 16px;
++  object-fit: contain;
++  border-radius: 3px;
+ }
+
+ .laneName {
+@@ -194,33 +200,10 @@ $lane-width: 210px;
    white-space: nowrap;
  }
- 
+
 -.lanePeriod {
 -  flex: none;
 -  padding: 0 6px;
@@ -111,33 +168,79 @@ index 5cb3a81..a818a77 100644
 -    color: var(--text-secondary);
 -    font-variant-numeric: tabular-nums;
 -  }
--}
--
++.laneQuota {
++  color: var(--text-secondary);
++  font-weight: 400;
++  font-variant-numeric: tabular-nums;
+ }
+
  .track {
-   position: relative;
-   min-height: 46px;
-@@ -245,16 +217,8 @@ $lane-width: 210px;
+@@ -245,16 +228,23 @@ $lane-width: 210px;
    }
  }
- 
+
 -// Vertical "now" marker, above the grid but below the bars so it never hides
 -// a label.
++.nowTrack {
++  position: absolute;
++  inset: 0 0 0 $lane-width;
++  z-index: 4;
++  pointer-events: none;
++}
++
  .nowLine {
--  position: absolute;
--  top: 0;
--  bottom: 0;
+   position: absolute;
+   top: 0;
+   bottom: 0;
 -  width: 1px;
 -  background: var(--text-tertiary, var(--text-quaternary));
 -  opacity: 0.8;
 -  z-index: 1;
-+  background: #fff;
++  width: 2px;
++  color: var(--text-secondary);
++  background: repeating-linear-gradient(to bottom, currentColor 0 6px, transparent 6px 10px);
++  opacity: 0.85;
++  transform: translateX(-50%);
++  pointer-events: auto;
  }
- 
+
  .window {
-@@ -336,52 +300,6 @@ $lane-width: 210px;
+@@ -309,23 +299,17 @@ $lane-width: 210px;
+   font-variant-numeric: tabular-nums;
+ }
+
+-// A reset credit is use-it-or-lose-it, so its expiry sits above the window bar
+-// as a narrow amber tick without competing with the bar's own label.
+-.resetCreditTick {
++// Align the reset-credit arrow with the top edge of the quota window.
++.resetCreditMarker {
+   position: absolute;
+-  z-index: 3;
+-  top: 6px;
+-  bottom: 6px;
+-  width: 2px;
+-  transform: translateX(-50%);
+-  border-radius: 999px;
++  top: calc(50% - 11px);
++  z-index: 4;
++  width: 10px;
++  height: 7px;
++  transform: translate(-50%, -100%);
++  clip-path: polygon(0 0, 100% 0, 50% 100%);
+   background: var(--amber-color);
+-  box-shadow: 0 0 0 1px var(--bg-primary);
+   cursor: help;
+-
+-  &:hover {
+-    width: 4px;
+-  }
+ }
+
+ .laneIdle {
+@@ -336,52 +320,6 @@ $lane-width: 210px;
    color: var(--text-quaternary);
  }
- 
+
 -.legend {
 -  display: flex;
 -  align-items: center;
@@ -187,14 +290,29 @@ index 5cb3a81..a818a77 100644
  @include mobile {
    // The lane column can't shrink much before names become unreadable, so the
    // chart scrolls horizontally rather than compressing to illegibility.
+@@ -390,7 +328,7 @@ $lane-width: 210px;
+   }
+
+   .axis,
+-  .lane {
++  .lanes {
+     min-width: 720px;
+   }
+ }
 diff --git a/src/features/quota/components/QuotaTimeline.tsx b/src/features/quota/components/QuotaTimeline.tsx
-index 1e4d292..1b0a0d7 100644
+index 1e4d292..dfea1c4 100644
 --- a/src/features/quota/components/QuotaTimeline.tsx
 +++ b/src/features/quota/components/QuotaTimeline.tsx
-@@ -18,6 +18,12 @@ import { useTranslation } from 'react-i18next';
+@@ -18,6 +18,18 @@ import { useTranslation } from 'react-i18next';
  import { formatRelativeInstant, TYPE_COLORS } from '@/utils/quota';
  import { getQuotaCacheKey, getQuotaDisplayName } from '@/utils/quota/identity';
  import { useNow } from '@/hooks/useNow';
++import {
++  getAuthFileIcon,
++  getThemeSurfaceIconBackground,
++  getTypeLabel,
++  isThemeSurfaceIconProvider,
++} from '@/features/authFiles/constants';
 +import { useQuotaHistory } from '@/features/quotaHistory/useQuotaHistory';
 +import { ExhaustionMarker } from '@/features/quotaHistory/ExhaustionMarker';
 +import { quotaProjection } from '@/features/quotaHistory/projection';
@@ -204,18 +322,29 @@ index 1e4d292..1b0a0d7 100644
  import type { ResolvedTheme, ThemeColors } from '@/types';
  import {
    buildTimelineLane,
-@@ -74,6 +80,7 @@ export function QuotaTimeline({
+@@ -74,6 +86,7 @@ export function QuotaTimeline({
    const { t } = useTranslation();
    const [mode, setMode] = useState<TimelineMode>(initialMode);
    const [offset, setOffset] = useState(initialOffset);
 +  const { observations, error: historyError } = useQuotaHistory();
- 
+
    // The clock has to advance on its own: bars are classified past/live/next
    // against it and the marker is positioned by it, so a long-lived tab would
-@@ -127,6 +134,35 @@ export function QuotaTimeline({
+@@ -127,6 +140,46 @@ export function QuotaTimeline({
      [laneInputs, mode, span.days]
    );
- 
+
++  const weeklyBalances = useMemo(
++    () =>
++      new Map(
++        laneInputs.map((input) => {
++          const weekly = buildTimelineLane({ ...input, maxPeriodHours: 7 * 24 });
++          return [input.name, weekly.periodHours === 7 * 24 ? weekly.remaining : null];
++        })
++      ),
++    [laneInputs]
++  );
++
 +  const projections = useMemo(() => {
 +    const byCredential = new Map<string, Map<string, typeof observations>>();
 +    for (const sample of observations) {
@@ -248,17 +377,52 @@ index 1e4d292..1b0a0d7 100644
    /** Weekly: one cell per day. Session: one per 6 hours. */
    const cells = useMemo(() => {
      const zoomed = mode === 'session';
-@@ -265,44 +301,17 @@ export function QuotaTimeline({
-                 cells={cells}
-                 nowPercent={nowPercent}
-                 resolvedTheme={resolvedTheme}
-+                projection={projections.get(lane.name) ?? { status: 'insufficient' }}
-               />
-             ))}
+@@ -255,54 +308,40 @@ export function QuotaTimeline({
+               </div>
+             </div>
+
+-            {lanes.map((lane) => (
+-              <Lane
+-                key={lane.name}
+-                lane={lane}
+-                span={span}
+-                now={now}
+-                mode={mode}
+-                cells={cells}
+-                nowPercent={nowPercent}
+-                resolvedTheme={resolvedTheme}
+-              />
+-            ))}
++            <div className={styles.lanes}>
++              {lanes.map((lane) => (
++                <Lane
++                  key={lane.name}
++                  lane={lane}
++                  span={span}
++                  now={now}
++                  mode={mode}
++                  cells={cells}
++                  resolvedTheme={resolvedTheme}
++                  weeklyRemaining={weeklyBalances.get(lane.name) ?? null}
++                  projection={projections.get(lane.name) ?? { status: 'insufficient' }}
++                />
++              ))}
++              {nowPercent !== null && (
++                <div className={styles.nowTrack}>
++                  <div
++                    className={styles.nowLine}
++                    style={{ left: `${nowPercent}%` }}
++                    role="img"
++                    aria-label={t('quota_history.now')}
++                    title={t('quota_history.now')}
++                  />
++                </div>
++              )}
++            </div>
            </>
          )}
        </div>
- 
+
 -      {lanes.length > 0 && (
 -        <footer className={styles.legend}>
 -          <span className={styles.legendItem}>
@@ -298,22 +462,35 @@ index 1e4d292..1b0a0d7 100644
        )}
      </section>
    );
-@@ -316,9 +325,10 @@ interface LaneProps {
+@@ -314,11 +353,21 @@ interface LaneProps {
+   now: number;
+   mode: TimelineMode;
    cells: { at: number; isWeekend: boolean; isDayStart: boolean }[];
-   nowPercent: number | null;
+-  nowPercent: number | null;
    resolvedTheme: ResolvedTheme;
++  weeklyRemaining: number | null;
 +  projection: QuotaProjection;
  }
- 
+
 -function Lane({ lane, span, now, mode, cells, nowPercent, resolvedTheme }: LaneProps) {
-+function Lane({ lane, span, now, mode, cells, nowPercent, resolvedTheme, projection }: LaneProps) {
++function Lane({
++  lane,
++  span,
++  now,
++  mode,
++  cells,
++  resolvedTheme,
++  weeklyRemaining,
++  projection,
++}: LaneProps) {
    const { t, i18n } = useTranslation();
- 
+
    const windows = useMemo(
-@@ -334,16 +344,6 @@ function Lane({ lane, span, now, mode, cells, nowPercent, resolvedTheme }: LaneP
+@@ -333,34 +382,37 @@ function Lane({ lane, span, now, mode, cells, nowPercent, resolvedTheme }: LaneP
+   const colorSet = TYPE_COLORS[lane.provider] || TYPE_COLORS.unknown;
    const color: ThemeColors =
      resolvedTheme === 'dark' && colorSet.dark ? colorSet.dark : colorSet.light;
- 
+-
 -  // Sub-day windows are labelled in hours — rounding 5h to days gives "0d".
 -  const periodLabel =
 -    mode === 'session'
@@ -323,14 +500,22 @@ index 1e4d292..1b0a0d7 100644
 -        : lane.periodHours < 24
 -          ? `${Math.round(lane.periodHours)}h`
 -          : `${Math.round(lane.periodHours / 24)}d`;
--
++  const providerLabel = getTypeLabel(t, lane.provider);
++  const iconSrc = getAuthFileIcon(lane.provider, resolvedTheme);
++  const weeklyPercent =
++    weeklyRemaining === null
++      ? '—'
++      : `${new Intl.NumberFormat(i18n.resolvedLanguage, { maximumFractionDigits: 1 }).format(weeklyRemaining)}%`;
++  const labelTitle = `${lane.displayName}\n${t('quota_history.weekly_remaining', { value: weeklyPercent })}`;
+
    return (
      <div className={styles.lane} style={{ '--provider-accent': color.text } as CSSProperties}>
        <div className={styles.laneHead}>
-@@ -352,15 +352,6 @@ function Lane({ lane, span, now, mode, cells, nowPercent, resolvedTheme }: LaneP
-           <span className={styles.laneName} title={lane.displayName}>
-             {lane.displayName}
-           </span>
+         <div className={styles.laneTop}>
+-          <span className={styles.laneDot} />
+-          <span className={styles.laneName} title={lane.displayName}>
+-            {lane.displayName}
+-          </span>
 -          {periodLabel && <span className={styles.lanePeriod}>{periodLabel}</span>}
 -        </div>
 -        <div className={styles.laneLimits}>
@@ -338,35 +523,150 @@ index 1e4d292..1b0a0d7 100644
 -            <span key={limit.label} className={styles.laneLimit}>
 -              {lane.provider === 'meta' ? t(limit.label) : limit.label}{' '}
 -              <b>{limit.remaining}%</b>
--            </span>
++          {iconSrc ? (
++            <img
++              src={iconSrc}
++              alt=""
++              className={styles.laneIcon}
++              style={
++                isThemeSurfaceIconProvider(lane.provider)
++                  ? { background: getThemeSurfaceIconBackground(resolvedTheme) }
++                  : undefined
++              }
++            />
++          ) : (
++            <span className={styles.laneIcon} aria-hidden="true">
++              {providerLabel.slice(0, 1)}
+             </span>
 -          ))}
++          )}
++          <span className={styles.laneName} title={labelTitle}>
++            {providerLabel} <span className={styles.laneQuota}>({weeklyPercent})</span>
++          </span>
          </div>
        </div>
- 
-@@ -376,7 +367,13 @@ function Lane({ lane, span, now, mode, cells, nowPercent, resolvedTheme }: LaneP
+
+@@ -375,10 +427,6 @@ function Lane({ lane, span, now, mode, cells, nowPercent, resolvedTheme }: LaneP
+           ))}
          </div>
- 
-         {nowPercent !== null && (
+
+-        {nowPercent !== null && (
 -          <div className={styles.nowLine} style={{ left: `${nowPercent}%` }} />
-+          <div
-+            className={`${historyStyles.timeMarker} ${styles.nowLine}`}
-+            style={{ left: `${nowPercent}%` }}
-+            role="img"
-+            aria-label={t('quota_history.now')}
-+            title={t('quota_history.now')}
-+          />
-         )}
- 
+-        )}
+-
          {windows.length === 0 ? (
-@@ -425,6 +422,8 @@ function Lane({ lane, span, now, mode, cells, nowPercent, resolvedTheme }: LaneP
+           <span className={styles.laneIdle}>
+             {t('quota_management.windows_idle', {
+@@ -425,6 +473,8 @@ function Lane({ lane, span, now, mode, cells, nowPercent, resolvedTheme }: LaneP
            })
          )}
- 
+
 +        <ExhaustionMarker projection={projection} startMs={span.startMs} endMs={span.endMs} />
 +
          {resetCredits.map((credit, index) => {
            const grantedLabel = t('quota_management.windows_credit_granted', {
              defaultValue: 'Granted',
+@@ -446,8 +496,8 @@ function Lane({ lane, span, now, mode, cells, nowPercent, resolvedTheme }: LaneP
+           return (
+             <span
+               key={credit.id || `${credit.expiresAtMs}-${index}`}
+-              className={styles.resetCreditTick}
+-              style={{ left: `${credit.leftPercent}%` }}
++              className={styles.resetCreditMarker}
++              style={{ left: `clamp(5px, ${credit.leftPercent}%, calc(100% - 5px))` }}
+               title={title}
+               role="img"
+               aria-label={title.split('\n').join(', ')}
+diff --git a/src/features/quota/providers/claude/ClaudeQuotaBody.tsx b/src/features/quota/providers/claude/ClaudeQuotaBody.tsx
+index d4be98a..3ddc079 100644
+--- a/src/features/quota/providers/claude/ClaudeQuotaBody.tsx
++++ b/src/features/quota/providers/claude/ClaudeQuotaBody.tsx
+@@ -15,6 +15,7 @@ import type { QuotaBodyProps } from '../../types';
+ export function ClaudeQuotaBody({
+   quota,
+   classes,
++  summary = false,
+   planItems,
+   afterPlan,
+ }: QuotaBodyProps<ClaudeQuotaState>) {
+@@ -25,7 +26,7 @@ export function ClaudeQuotaBody({
+     [quota, now]
+   );
+   const windows = quota.windows ?? [];
+-  const extraUsage = quota.extraUsage ?? null;
++  const extraUsage = summary ? null : (quota.extraUsage ?? null);
+   const planType = quota.planType ?? null;
+   const language = i18n.resolvedLanguage;
+   const formatMoney = (value: number | null, currency = 'USD', divisor = 1): string => {
+@@ -155,7 +156,7 @@ export function ClaudeQuotaBody({
+           </div>
+         );
+       })}
+-      {windows.length === 0 && !extraUsage && !quota.dollarWindows?.length ? (
++      {summary ? null : windows.length === 0 && !extraUsage && !quota.dollarWindows?.length ? (
+         <div className={classes.quotaMessage}>{t('claude_quota.empty_windows')}</div>
+       ) : (
+         windows.map((window, index) => {
+diff --git a/src/features/quota/providers/codex/CodexQuotaBody.tsx b/src/features/quota/providers/codex/CodexQuotaBody.tsx
+index df61497..3c13930 100644
+--- a/src/features/quota/providers/codex/CodexQuotaBody.tsx
++++ b/src/features/quota/providers/codex/CodexQuotaBody.tsx
+@@ -1,6 +1,5 @@
+ /**
+- * Codex 额度渲染体：套餐 chip 行（elite=Pro 20x 液态铂金 / premium=金卡）、
+- * 重置积分明细、用量窗口水位条。
++ * Codex plan, account credits, manual resets, and optional quota windows.
+  */
+
+ import { useMemo } from 'react';
+@@ -24,14 +23,18 @@ import { collectQuotaRowInstants, pickUrgentRowId, resetCreditRowId } from '../.
+ import type { QuotaBodyProps, QuotaClassMap } from '../../types';
+
+ const getPlanValueClass = (planType: string | null, classes: QuotaClassMap): string => {
+-  // elite/premium 顺序契约由 resolvePlanTier 承载（tests/quotaPlanTier.test.ts 守护）。
++  // resolvePlanTier owns the elite/premium precedence (covered by quotaPlanTier tests).
+   const tier = resolvePlanTier(planType);
+   if (tier === 'elite') return classes.elitePlanValue;
+   if (tier === 'premium') return classes.premiumPlanValue;
+   return classes.codexPlanValue;
+ };
+
+-export function CodexQuotaBody({ quota, classes }: QuotaBodyProps<CodexQuotaState>) {
++export function CodexQuotaBody({
++  quota,
++  classes,
++  summary = false,
++}: QuotaBodyProps<CodexQuotaState>) {
+   const { t, i18n } = useTranslation();
+   const now = useNow();
+   const locale = i18n.resolvedLanguage;
+@@ -44,7 +47,7 @@ export function CodexQuotaBody({ quota, classes }: QuotaBodyProps<CodexQuotaStat
+   const windows = quota.windows ?? [];
+   const planType = quota.planType ?? null;
+   const subscriptionActiveUntil = quota.subscriptionActiveUntil ?? null;
+-  const creditBalance = quota.creditBalance ?? null;
++  const creditBalance = quota.creditBalance?.replace(/(\.\d*?[1-9])0+$|\.0+$/, '$1') ?? null;
+   const creditsUnlimited = quota.creditsUnlimited === true;
+   const rateLimitResetCreditsAvailableCount = quota.rateLimitResetCreditsAvailableCount ?? null;
+   const rateLimitResetCredits = quota.rateLimitResetCredits ?? [];
+@@ -67,7 +70,7 @@ export function CodexQuotaBody({ quota, classes }: QuotaBodyProps<CodexQuotaStat
+   };
+
+   const planLabel = getPlanLabel(planType);
+-  const planValueClass = getPlanValueClass(planType, classes);
++  const planValueClass = summary ? classes.codexPlanValue : getPlanValueClass(planType, classes);
+
+   // Renewal was the one date on this card in a different shape (a full
+   // toLocaleString). Reformatted from the instant so it reads like the rest,
+@@ -171,7 +174,7 @@ export function CodexQuotaBody({ quota, classes }: QuotaBodyProps<CodexQuotaStat
+           })}
+         </div>
+       ) : null}
+-      {windows.length === 0 ? (
++      {summary ? null : windows.length === 0 ? (
+         <div className={classes.quotaMessage}>{t('codex_quota.empty_windows')}</div>
+       ) : (
+         windows.map((window, index) => {
 diff --git a/src/features/quota/providers/index.ts b/src/features/quota/providers/index.ts
 index 4b4b3a6..7eba5e8 100644
 --- a/src/features/quota/providers/index.ts
@@ -379,7 +679,7 @@ index 4b4b3a6..7eba5e8 100644
 - * 窄接口 cast 同一模式）；具体状态类型由各 data.ts 的强类型导出承载。
 - */
 +/** Provider adapters combine quota readers and their existing card bodies. */
- 
+
  import type { ComponentType } from 'react';
 +import { withQuotaHistory } from '@/features/quotaHistory/historyReader';
  import type { TFunction } from 'i18next';
@@ -388,7 +688,7 @@ index 4b4b3a6..7eba5e8 100644
 @@ -28,7 +24,7 @@ import { PluginQuotaBody } from './plugin/PluginQuotaBody';
  import { XAI_CONFIG } from './xai/data';
  import { XaiQuotaBody } from './xai/XaiQuotaBody';
- 
+
 -/** 所有 provider 额度状态的公共骨架（各 *QuotaState 的结构子集）。 */
 +/** Common state shared by the provider quota cards. */
  export interface QuotaCardState {
@@ -396,7 +696,7 @@ index 4b4b3a6..7eba5e8 100644
    error?: string;
 @@ -52,27 +48,27 @@ export interface QuotaAdapter {
  }
- 
+
  export const QUOTA_ADAPTERS: Record<QuotaProviderType, QuotaAdapter> = {
 -  antigravity: {
 +  antigravity: withQuotaHistory({
@@ -419,20 +719,128 @@ index 4b4b3a6..7eba5e8 100644
 +  plugin: withQuotaHistory({ ...PLUGIN_CONFIG, Body: PluginQuotaBody } as unknown as QuotaAdapter),
 +  xai: withQuotaHistory({ ...XAI_CONFIG, Body: XaiQuotaBody } as unknown as QuotaAdapter),
  };
- 
+
  export type QuotaMapUpdater = (
    updater: (prev: Record<string, QuotaCardState>) => Record<string, QuotaCardState>
  ) => void;
- 
+
 -/** 取 adapter 对应的 store setter（getState 直读，不建立订阅）。 */
 +/** Read the store setter without creating a subscription. */
  export const getQuotaSetter = (adapter: QuotaAdapter): QuotaMapUpdater =>
    useQuotaStore.getState()[adapter.storeSetter] as unknown as QuotaMapUpdater;
- 
+
 -/** 取 adapter 对应的额度缓存快照（getState 直读，不建立订阅）。 */
 +/** Read the current provider quota cache without subscribing. */
  export const getQuotaMap = (adapter: QuotaAdapter): Record<string, QuotaCardState> =>
    adapter.storeSelector(useQuotaStore.getState() as unknown as QuotaStore);
+diff --git a/src/features/quota/providers/meta/MetaQuotaBody.tsx b/src/features/quota/providers/meta/MetaQuotaBody.tsx
+index 6f2dabd..2b0e186 100644
+--- a/src/features/quota/providers/meta/MetaQuotaBody.tsx
++++ b/src/features/quota/providers/meta/MetaQuotaBody.tsx
+@@ -8,7 +8,7 @@ import { QuotaResetLabel } from '../../components/QuotaResetLabel';
+ import { collectQuotaRowInstants, pickUrgentRowId } from '../../resetSchedule';
+ import type { QuotaBodyProps } from '../../types';
+
+-export function MetaQuotaBody({ quota, classes }: QuotaBodyProps<MetaQuotaState>) {
++export function MetaQuotaBody({ quota, classes, summary = false }: QuotaBodyProps<MetaQuotaState>) {
+   const { t, i18n } = useTranslation();
+   const now = useNow();
+   const soonestRowId = useMemo(
+@@ -17,6 +17,7 @@ export function MetaQuotaBody({ quota, classes }: QuotaBodyProps<MetaQuotaState>
+   );
+   const data = quota.data;
+   if (!data) return <div className={classes.quotaMessage}>{t('meta_quota.empty_data')}</div>;
++  const windows = summary ? [] : data.windows;
+
+   return (
+     <>
+@@ -28,10 +29,10 @@ export function MetaQuotaBody({ quota, classes }: QuotaBodyProps<MetaQuotaState>
+           </span>
+         </div>
+       )}
+-      {data.windows.every((window) => window.usedPercent === null) && (
++      {!summary && data.windows.every((window) => window.usedPercent === null) && (
+         <div className={classes.quotaMessage}>{t('meta_quota.empty_data')}</div>
+       )}
+-      {data.windows.map((window, index) => {
++      {windows.map((window, index) => {
+         const remaining = window.usedPercent === null ? null : 100 - window.usedPercent;
+         const resetDisplay = buildResetDisplay(
+           null,
+diff --git a/src/features/quota/providers/xai/XaiQuotaBody.tsx b/src/features/quota/providers/xai/XaiQuotaBody.tsx
+index 7f990f1..05ea556 100644
+--- a/src/features/quota/providers/xai/XaiQuotaBody.tsx
++++ b/src/features/quota/providers/xai/XaiQuotaBody.tsx
+@@ -1,6 +1,5 @@
+ /**
+- * xAI 额度渲染体：套餐 chip 行（SuperGrok Heavy / 付费档=金卡）、
+- * 周/月账单水位条、按量付费余额。
++ * xAI plan, product usage, balances, and optional weekly/monthly quota windows.
+  */
+
+ import { useMemo } from 'react';
+@@ -72,7 +71,7 @@ const resolveXaiPlan = (
+   return null;
+ };
+
+-export function XaiQuotaBody({ quota, classes }: QuotaBodyProps<XaiQuotaState>) {
++export function XaiQuotaBody({ quota, classes, summary = false }: QuotaBodyProps<XaiQuotaState>) {
+   const { t, i18n } = useTranslation();
+   // Ahead of the early return below — hooks cannot be conditional.
+   const now = useNow();
+@@ -205,7 +204,7 @@ export function XaiQuotaBody({ quota, classes }: QuotaBodyProps<XaiQuotaState>)
+           </span>
+         </div>
+       )}
+-      {hasWeeklyData && (
++      {!summary && hasWeeklyData && (
+         <div
+           className={classes.quotaRow}
+           title={weeklySoon ? t('quota_management.soonest_row_hint') : undefined}
+@@ -229,20 +228,25 @@ export function XaiQuotaBody({ quota, classes }: QuotaBodyProps<XaiQuotaState>)
+         </div>
+       )}
+       {billing.productUsage.length > 0 && (
+-        <div className={classes.quotaMessage}>
+-          <div>{t('xai_quota.usage_breakdown')}</div>
++        <div className={classes.codexResetCredits}>
++          <div className={classes.codexResetCreditsTitle}>{t('xai_quota.usage_breakdown')}</div>
+           {billing.productUsage.map((item) => (
+-            <div key={`product-${item.product}`}>
+-              {t('xai_quota.product_usage', { product: item.product })}
+-              {': '}
+-              {item.usagePercent === null
+-                ? t('xai_quota.usage_unavailable')
+-                : formatXaiPercent(Math.max(0, Math.min(100, item.usagePercent)))}
++            <div key={`product-${item.product}`} className={classes.codexPlan}>
++              <span className={classes.codexPlanItem}>
++                <span className={classes.codexPlanLabel}>
++                  {t('xai_quota.product_usage', { product: item.product })}
++                </span>
++                <span className={classes.codexPlanValue}>
++                  {item.usagePercent === null
++                    ? t('xai_quota.usage_unavailable')
++                    : formatXaiPercent(Math.max(0, Math.min(100, item.usagePercent)))}
++                </span>
++              </span>
+             </div>
+           ))}
+         </div>
+       )}
+-      {onDemandCap > 0 && (
++      {!summary && onDemandCap > 0 && (
+         <div className={classes.quotaRow}>
+           <div className={classes.quotaRowHeader}>
+             <span className={classes.quotaModel}>{t('xai_quota.pay_as_you_go_label')}</span>
+@@ -254,7 +258,7 @@ export function XaiQuotaBody({ quota, classes }: QuotaBodyProps<XaiQuotaState>)
+           <QuotaMeter percent={onDemandRemaining} classes={classes} index={1} />
+         </div>
+       )}
+-      {hasMonthlyData && (
++      {!summary && hasMonthlyData && (
+         <div className={classes.quotaRow}>
+           <div className={classes.quotaRowHeader}>
+             <span className={classes.quotaModel}>{t('xai_quota.monthly_credits')}</span>
 diff --git a/src/features/quota/quotaTimelineModel.ts b/src/features/quota/quotaTimelineModel.ts
 index 39f6113..e154cf0 100644
 --- a/src/features/quota/quotaTimelineModel.ts
@@ -447,7 +855,7 @@ index 39f6113..e154cf0 100644
    /** Window length in hours. */
 @@ -283,6 +284,7 @@ interface ResetCreditLike {
  }
- 
+
  interface KimiRowLike {
 +  id?: string;
    label?: string;
@@ -455,7 +863,7 @@ index 39f6113..e154cf0 100644
    used: number;
 @@ -300,6 +302,8 @@ interface XaiBillingLike {
  }
- 
+
  interface AntigravityBucketLike {
 +  id?: string;
 +  historyId?: string;
@@ -463,7 +871,7 @@ index 39f6113..e154cf0 100644
    /** Fraction 0..1 of quota REMAINING — the inverse of the percent-used providers. */
    remainingFraction?: number | null;
 @@ -402,6 +406,7 @@ export function buildTimelineLane(input: TimelineLaneInput): TimelineLane {
- 
+
      return {
        ...empty,
 +      windowId: chosen.id ?? chosen.label ?? null,
@@ -479,7 +887,7 @@ index 39f6113..e154cf0 100644
        periodHours: chosen.periodHours,
        remaining: chosen.remainingPercent,
 @@ -460,6 +466,7 @@ export function buildTimelineLane(input: TimelineLaneInput): TimelineLane {
- 
+
      return {
        ...empty,
 +      windowId: 'weekly',
@@ -528,8 +936,84 @@ index 39f6113..e154cf0 100644
        remaining: remainingOf(chosen),
        limits: windows
          .map((window) => ({
+diff --git a/src/features/quota/types.ts b/src/features/quota/types.ts
+index 8f5fb43..e60c976 100644
+--- a/src/features/quota/types.ts
++++ b/src/features/quota/types.ts
+@@ -1,16 +1,13 @@
+ /**
+- * 额度渲染层的类型化样式契约。
+- *
+- * 额度 body 在两个宿主穿不同外衣：额度页（QuotaBody.module.scss）与
+- * 认证文件卡片（AuthFileQuota.module.scss）。宿主通过 bindQuotaClasses
+- * 把自己的 CSS Module 绑定成 QuotaClassMap —— 缺任何一个类名会在模块
+- * 初始化时抛错并列出缺失清单，替代旧字符串 styleMap 的静默 class="undefined"。
++ * Shared style contract for quota bodies in the quota page and auth-file cards.
++ * Each host binds its CSS Module through bindQuotaClasses, which reports every
++ * missing class at initialization instead of silently rendering undefined styles.
+  */
+
+ import type { ReactNode } from 'react';
+
+ export interface QuotaClassMap {
+-  // 额度行（五个提供商共用）
++  // Shared quota rows.
+   quotaRow: string;
+   quotaRowHeader: string;
+   quotaModel: string;
+@@ -21,15 +18,14 @@ export interface QuotaClassMap {
+   quotaResetRelativeSoon: string;
+   quotaAmount: string;
+   quotaMessage: string;
+-  // 套餐 chip 行（codex 命名，claude/antigravity/kimi/xai 复用；
+-  // premium=金卡、elite=Pro 20x 液态铂金 —— 均为定稿资产，样式不可改）
++  // Shared plan row; premium and elite badge styles are finalized assets.
+   codexPlan: string;
+   codexPlanItem: string;
+   codexPlanLabel: string;
+   codexPlanValue: string;
+   premiumPlanValue: string;
+   elitePlanValue: string;
+-  // Codex 重置积分
++  // Codex manual reset credits.
+   codexResetCredits: string;
+   codexResetCreditsTitle: string;
+   codexResetCreditRow: string;
+@@ -37,12 +33,12 @@ export interface QuotaClassMap {
+   codexResetCreditLabel: string;
+   codexResetCreditTime: string;
+   codexResetCreditsError: string;
+-  // Antigravity 分组
++  // Antigravity groups.
+   antigravityQuotaGroup: string;
+   antigravityQuotaGroupHeader: string;
+   antigravityQuotaGroupTitle: string;
+   antigravityQuotaGroupDescription: string;
+-  // 水位条（QuotaMeter）
++  // QuotaMeter tracks and fills.
+   quotaBar: string;
+   quotaBarFill: string;
+   quotaBarFillHigh: string;
+@@ -85,7 +81,7 @@ export const QUOTA_CLASS_KEYS: readonly (keyof QuotaClassMap)[] = [
+   'quotaBarFillLow',
+ ];
+
+-/** 宿主 CSS Module → 类型化契约。缺键即抛（fail-loud），`source` 用于报错定位。 */
++/** Bind a host CSS Module, reporting missing keys with their source. */
+ export function bindQuotaClasses(module: Record<string, string>, source: string): QuotaClassMap {
+   const missing = QUOTA_CLASS_KEYS.filter((key) => !module[key]);
+   if (missing.length > 0) {
+@@ -101,6 +97,8 @@ export function bindQuotaClasses(module: Record<string, string>, source: string)
+ export interface QuotaBodyProps<TState> {
+   quota: TState;
+   classes: QuotaClassMap;
++  /** Account summary for the quota page, whose timeline already shows the windows. */
++  summary?: boolean;
+   /** Host-owned chips appended to the provider's plan row (`codexPlanItem` spans). */
+   planItems?: ReactNode;
+   /** Host-owned content placed right after the plan row, before usage rows. */
 diff --git a/src/i18n/locales/en.json b/src/i18n/locales/en.json
-index 54eeef1..c94f9bc 100644
+index 54eeef1..a3bf761 100644
 --- a/src/i18n/locales/en.json
 +++ b/src/i18n/locales/en.json
 @@ -107,7 +107,8 @@
@@ -552,7 +1036,7 @@ index 54eeef1..c94f9bc 100644
    },
    "dashboard": {
      "hero_verdict_good": "All systems steady",
-@@ -2310,5 +2312,38 @@
+@@ -2310,5 +2312,39 @@
      "error": "Binding failed. Please start over.",
      "unsupported": "This backend does not support SIWC binding.",
      "expired": "The binding session expired. Please start over."
@@ -580,6 +1064,7 @@ index 54eeef1..c94f9bc 100644
 +    "observed_hours": "{{value}} observed hours",
 +    "marker_detail": "Projected exhaustion: {{at}} (São Paulo) · {{offset}}h relative to reset · previous {{hours}}h average: {{rate}} p.p./h. Extrapolates the current balance without reset replenishment.",
 +    "bands": "Now: white · Projected exhaustion: green ±6h · blue ±12h · yellow ±24h · red >24h from reset, before or after.",
++    "weekly_remaining": "Weekly quota remaining: {{value}}",
 +    "now": "Current time",
 +    "insufficient": "Projection: insufficient history for the time remaining until reset.",
 +    "stale": "Projection paused: readings are stale.",
@@ -592,7 +1077,7 @@ index 54eeef1..c94f9bc 100644
    }
  }
 diff --git a/src/i18n/locales/ko.json b/src/i18n/locales/ko.json
-index 08a4a7f..926ad20 100644
+index 08a4a7f..8133aa9 100644
 --- a/src/i18n/locales/ko.json
 +++ b/src/i18n/locales/ko.json
 @@ -107,7 +107,8 @@
@@ -615,7 +1100,7 @@ index 08a4a7f..926ad20 100644
    },
    "dashboard": {
      "hero_verdict_good": "모든 시스템 정상",
-@@ -2310,5 +2312,38 @@
+@@ -2310,5 +2312,39 @@
      "error": "바인딩에 실패했습니다. 다시 시작하세요.",
      "unsupported": "이 서버는 SIWC 바인딩을 지원하지 않습니다.",
      "expired": "바인딩 세션이 만료되었습니다. 다시 시작하세요."
@@ -643,6 +1128,7 @@ index 08a4a7f..926ad20 100644
 +    "observed_hours": "{{value}} observed hours",
 +    "marker_detail": "Projected exhaustion: {{at}} (São Paulo) · {{offset}}h relative to reset · previous {{hours}}h average: {{rate}} p.p./h. Extrapolates the current balance without reset replenishment.",
 +    "bands": "Now: white · Projected exhaustion: green ±6h · blue ±12h · yellow ±24h · red >24h from reset, before or after.",
++    "weekly_remaining": "남은 주간 할당량: {{value}}",
 +    "now": "현재 시간",
 +    "insufficient": "Projection: insufficient history for the time remaining until reset.",
 +    "stale": "Projection paused: readings are stale.",
@@ -655,7 +1141,7 @@ index 08a4a7f..926ad20 100644
    }
  }
 diff --git a/src/i18n/locales/ru.json b/src/i18n/locales/ru.json
-index 8e5373d..46ba199 100644
+index 8e5373d..e038f86 100644
 --- a/src/i18n/locales/ru.json
 +++ b/src/i18n/locales/ru.json
 @@ -107,7 +107,8 @@
@@ -678,7 +1164,7 @@ index 8e5373d..46ba199 100644
    },
    "dashboard": {
      "hero_verdict_good": "Всё стабильно",
-@@ -2304,5 +2306,38 @@
+@@ -2304,5 +2306,39 @@
      "error": "Привязка не удалась. Начните заново.",
      "unsupported": "Этот сервер не поддерживает привязку SIWC.",
      "expired": "Сеанс привязки истёк. Начните заново."
@@ -706,6 +1192,7 @@ index 8e5373d..46ba199 100644
 +    "observed_hours": "{{value}} observed hours",
 +    "marker_detail": "Projected exhaustion: {{at}} (São Paulo) · {{offset}}h relative to reset · previous {{hours}}h average: {{rate}} p.p./h. Extrapolates the current balance without reset replenishment.",
 +    "bands": "Now: white · Projected exhaustion: green ±6h · blue ±12h · yellow ±24h · red >24h from reset, before or after.",
++    "weekly_remaining": "Остаток недельной квоты: {{value}}",
 +    "now": "Текущее время",
 +    "insufficient": "Projection: insufficient history for the time remaining until reset.",
 +    "stale": "Projection paused: readings are stale.",
@@ -718,7 +1205,7 @@ index 8e5373d..46ba199 100644
    }
  }
 diff --git a/src/i18n/locales/vi.json b/src/i18n/locales/vi.json
-index af88631..da7fc06 100644
+index af88631..a761f6b 100644
 --- a/src/i18n/locales/vi.json
 +++ b/src/i18n/locales/vi.json
 @@ -107,7 +107,8 @@
@@ -741,7 +1228,7 @@ index af88631..da7fc06 100644
    },
    "dashboard": {
      "hero_verdict_good": "Mọi hệ thống ổn định",
-@@ -2316,5 +2318,38 @@
+@@ -2316,5 +2318,39 @@
      "error": "Liên kết thất bại. Hãy bắt đầu lại.",
      "unsupported": "Máy chủ này không hỗ trợ liên kết SIWC.",
      "expired": "Phiên liên kết đã hết hạn. Hãy bắt đầu lại."
@@ -769,6 +1256,7 @@ index af88631..da7fc06 100644
 +    "observed_hours": "{{value}} observed hours",
 +    "marker_detail": "Projected exhaustion: {{at}} (São Paulo) · {{offset}}h relative to reset · previous {{hours}}h average: {{rate}} p.p./h. Extrapolates the current balance without reset replenishment.",
 +    "bands": "Now: white · Projected exhaustion: green ±6h · blue ±12h · yellow ±24h · red >24h from reset, before or after.",
++    "weekly_remaining": "Hạn mức tuần còn lại: {{value}}",
 +    "now": "Thời gian hiện tại",
 +    "insufficient": "Projection: insufficient history for the time remaining until reset.",
 +    "stale": "Projection paused: readings are stale.",
@@ -781,7 +1269,7 @@ index af88631..da7fc06 100644
    }
  }
 diff --git a/src/i18n/locales/zh-CN.json b/src/i18n/locales/zh-CN.json
-index 9b98f6f..ccb6594 100644
+index 9b98f6f..e545c1e 100644
 --- a/src/i18n/locales/zh-CN.json
 +++ b/src/i18n/locales/zh-CN.json
 @@ -107,7 +107,8 @@
@@ -812,7 +1300,7 @@ index 9b98f6f..ccb6594 100644
      "reset_success": "已重置 \"{{name}}\" 的 Codex 额度",
      "reset_failed": "重置 \"{{name}}\" 的 Codex 额度失败：{{message}}",
      "plan_plus": "Plus",
-@@ -2309,5 +2310,38 @@
+@@ -2309,5 +2310,39 @@
      "error": "绑定失败，请重新开始。",
      "unsupported": "当前后端不支持 SIWC 绑定。",
      "expired": "绑定会话已过期，请重新开始。"
@@ -840,6 +1328,7 @@ index 9b98f6f..ccb6594 100644
 +    "observed_hours": "{{value}} observed hours",
 +    "marker_detail": "Projected exhaustion: {{at}} (São Paulo) · {{offset}}h relative to reset · previous {{hours}}h average: {{rate}} p.p./h. Extrapolates the current balance without reset replenishment.",
 +    "bands": "Now: white · Projected exhaustion: green ±6h · blue ±12h · yellow ±24h · red >24h from reset, before or after.",
++    "weekly_remaining": "每周剩余额度：{{value}}",
 +    "now": "当前时间",
 +    "insufficient": "Projection: insufficient history for the time remaining until reset.",
 +    "stale": "Projection paused: readings are stale.",
@@ -852,7 +1341,7 @@ index 9b98f6f..ccb6594 100644
    }
  }
 diff --git a/src/i18n/locales/zh-TW.json b/src/i18n/locales/zh-TW.json
-index 9eb34ac..698c8fe 100644
+index 9eb34ac..cb196fa 100644
 --- a/src/i18n/locales/zh-TW.json
 +++ b/src/i18n/locales/zh-TW.json
 @@ -107,7 +107,8 @@
@@ -883,7 +1372,7 @@ index 9eb34ac..698c8fe 100644
      "reset_success": "已重置「{{name}}」的 Codex 配額",
      "reset_failed": "重置「{{name}}」的 Codex 配額失敗：{{message}}",
      "plan_plus": "Plus",
-@@ -2337,5 +2338,38 @@
+@@ -2337,5 +2338,39 @@
      "error": "綁定失敗，請重新開始。",
      "unsupported": "目前後端不支援 SIWC 綁定。",
      "expired": "綁定工作階段已過期，請重新開始。"
@@ -911,6 +1400,7 @@ index 9eb34ac..698c8fe 100644
 +    "observed_hours": "{{value}} observed hours",
 +    "marker_detail": "Projected exhaustion: {{at}} (São Paulo) · {{offset}}h relative to reset · previous {{hours}}h average: {{rate}} p.p./h. Extrapolates the current balance without reset replenishment.",
 +    "bands": "Now: white · Projected exhaustion: green ±6h · blue ±12h · yellow ±24h · red >24h from reset, before or after.",
++    "weekly_remaining": "每週剩餘配額：{{value}}",
 +    "now": "目前時間",
 +    "insufficient": "Projection: insufficient history for the time remaining until reset.",
 +    "stale": "Projection paused: readings are stale.",
@@ -946,3 +1436,33 @@ index 3867ead..48ffff1 100644
    ...(supportsPlugin
      ? [
          { path: '/plugin-pages/:pluginId/:menuIndex', element: <PluginResourcePage /> },
+diff --git a/tests/xaiQuotaUnavailable.test.ts b/tests/xaiQuotaUnavailable.test.ts
+index 8b63c4e..3bdca56 100644
+--- a/tests/xaiQuotaUnavailable.test.ts
++++ b/tests/xaiQuotaUnavailable.test.ts
+@@ -227,8 +227,10 @@ describe('XaiQuotaBody unavailable weekly usage', () => {
+
+     expect(markup).toContain('class="quotaPercent">84%</span>');
+     expect(markup).toContain('Usage breakdown (shared quota)');
+-    expect(markup).toContain('GrokBuild usage: 14%');
+-    expect(markup).toContain('GrokChat usage: 2%');
++    expect(markup).toContain('<span class="codexPlanLabel">GrokBuild usage</span>');
++    expect(markup).toContain('<span class="codexPlanValue">14%</span>');
++    expect(markup).toContain('<span class="codexPlanLabel">GrokChat usage</span>');
++    expect(markup).toContain('<span class="codexPlanValue">2%</span>');
+     expect(markup).toContain('width:84%');
+     expect(markup.match(/class="quotaRow"/g)).toHaveLength(1);
+     expect(markup).not.toContain('width:86%');
+@@ -248,8 +250,10 @@ describe('XaiQuotaBody unavailable weekly usage', () => {
+       )
+     );
+
+-    expect(markup).toContain('GrokBuild usage: 14%');
+-    expect(markup).toContain('GrokChat usage: Usage unavailable from xAI');
++    expect(markup).toContain('<span class="codexPlanLabel">GrokBuild usage</span>');
++    expect(markup).toContain('<span class="codexPlanValue">14%</span>');
++    expect(markup).toContain('<span class="codexPlanLabel">GrokChat usage</span>');
++    expect(markup).toContain('<span class="codexPlanValue">Usage unavailable from xAI</span>');
+     expect(markup).not.toContain('width:');
+     expect(markup).not.toContain('Used 14%');
+   });
