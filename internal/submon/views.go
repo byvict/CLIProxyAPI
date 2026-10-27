@@ -74,6 +74,7 @@ type sourceView struct {
 	Message          string     `json:"message"`
 	LastAttemptAt    *time.Time `json:"lastAttemptAt"`
 	CurrentAccountID string     `json:"currentAccountId"`
+	SideEffects      []string   `json:"sideEffects,omitempty"`
 	workerState
 }
 type snapshot struct {
@@ -156,6 +157,7 @@ func makeSnapshot(data storedData, states map[string]workerState, now time.Time)
 		src := sourceView{ID: id, Provider: p, Status: unavailable, workerState: states[id]}
 		if src.NextAt.IsZero() {
 			src.NextAt = data.Sources[id].NextAt
+			src.NotBefore = data.Sources[id].NotBefore
 			src.Failures = data.Sources[id].Failures
 		}
 		for _, b := range data.Bindings {
@@ -168,6 +170,7 @@ func makeSnapshot(data storedData, states map[string]workerState, now time.Time)
 				at := a.At
 				src.LastAttemptAt = &at
 				src.Status = a.Status
+				src.SideEffects = a.SideEffects
 				src.Message = statusMessage(a.Status, a.Code)
 			}
 		}
@@ -224,7 +227,7 @@ func makeSnapshot(data storedData, states map[string]workerState, now time.Time)
 			w := windowView{ID: key.id(), Freshness: "missing"}
 			var latest *sample
 			for i := range h {
-				if h[i].Window.Remaining != nil {
+				if h[i].Window.Capacity > 0 {
 					latest = &h[i]
 				}
 			}
@@ -238,14 +241,8 @@ func makeSnapshot(data storedData, states map[string]workerState, now time.Time)
 				}
 				w.AgeSeconds = &age
 				w.Freshness = "fresh"
-				if (w.ResetsAt != nil && !w.ResetsAt.After(now)) || time.Duration(age*float64(time.Second)) > 2*cadence(a.Provider) || av.Status != string(ok) || h[len(h)-1].Window.Remaining == nil {
+				if at.After(now) || (w.ResetsAt != nil && !w.ResetsAt.After(now)) || time.Duration(age*float64(time.Second)) > 2*cadence(a.Provider) || av.Status != string(ok) || h[len(h)-1].Window.Capacity == 0 {
 					w.Freshness = "stale"
-				}
-			} else {
-				for _, s := range h {
-					if s.Window.Capacity > 0 {
-						w.windowReading = s.Window
-					}
 				}
 			}
 			if w.Key.Kind == "" {
@@ -431,6 +428,11 @@ func makeView(data storedData, states map[string]workerState, now time.Time, sel
 				groups[key] = g
 			}
 			h := historyFor(data, a.ID, key)
+			for _, sample := range h {
+				if sample.Window.Label != "" {
+					g.Label = sample.Window.Label
+				}
+			}
 			result := analyze(h, analysisOptions{Now: now, Cadence: cadence(a.Provider), Period: selection.Period, Lookback: selection.Lookback, Horizon: selection.Horizon, Recurrence: selection.Recurrence})
 			freshness := "missing"
 			for _, w := range a.Windows {

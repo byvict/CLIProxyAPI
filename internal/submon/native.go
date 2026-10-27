@@ -11,13 +11,16 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
-	"strings"
 	"time"
 
 	"golang.org/x/text/unicode/norm"
 )
 
-var errCredentialMissing = errors.New("credential_missing")
+var (
+	errCredentialMissing = errors.New("credential_missing")
+	errCredentialAPIKey  = errors.New("api_key")
+	errUnsupportedSource = errors.New("unsupported_source")
+)
 
 type nativeAccess struct {
 	home     string
@@ -94,7 +97,7 @@ func (n nativeAccess) acquire(ctx context.Context, p provider) (credential, erro
 			return credential{Access: access}, nil
 		}
 		if n.getenv("ANTHROPIC_API_KEY") != "" || n.getenv("CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR") != "" {
-			return credential{}, errors.New("unsupported_source")
+			return credential{}, errUnsupportedSource
 		}
 		path, service := n.claudeLocation()
 		if n.platform == "darwin" {
@@ -145,9 +148,11 @@ func acquisitionFailure(err error) missing {
 	if errors.Is(err, errCredentialMissing) {
 		return missing{Status: unavailable, Code: "credential_missing"}
 	}
-	switch strings.TrimSpace(err.Error()) {
-	case "credential_missing", "api_key", "unsupported_source":
-		return missing{Status: unavailable, Code: err.Error()}
+	switch {
+	case errors.Is(err, errCredentialAPIKey):
+		return missing{Status: unavailable, Code: "api_key"}
+	case errors.Is(err, errUnsupportedSource):
+		return missing{Status: unavailable, Code: "unsupported_source"}
 	}
 	return missing{Status: invalidResponse, Code: "credential_read"}
 }

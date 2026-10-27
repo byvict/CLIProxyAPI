@@ -8,7 +8,7 @@ import (
 )
 
 func TestRunRejectsNonLoopbackBeforeCreatingRuntime(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "unused")
+	root := filepath.Join(testDir(t), "unused")
 	if err := Run(context.Background(), Options{DataDir: root, ListenAddr: "0.0.0.0:8318"}); err == nil {
 		t.Fatal("public listener accepted")
 	}
@@ -17,7 +17,7 @@ func TestRunRejectsNonLoopbackBeforeCreatingRuntime(t *testing.T) {
 	}
 }
 func TestCanceledLifecycleReleasesOwnerAndPreservesPrivateKey(t *testing.T) {
-	root := t.TempDir()
+	root := testDir(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if err := Run(ctx, Options{DataDir: root, ListenAddr: "127.0.0.1:0"}); err != nil {

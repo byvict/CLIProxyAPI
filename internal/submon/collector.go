@@ -10,6 +10,7 @@ import (
 type workerState struct {
 	InFlightSince *time.Time `json:"inFlightSince"`
 	NextAt        time.Time  `json:"nextAt"`
+	NotBefore     time.Time  `json:"notBefore"`
 	Queued        bool       `json:"queued"`
 	Failures      int        `json:"failures"`
 }
@@ -26,7 +27,7 @@ type collector struct {
 }
 
 func newCollector(s *store, sources []source, now func() time.Time) *collector {
-	c := &collector{store: s, workers: map[string]*sourceWorker{}, now: now}
+	c := &collector{store: s, workers: map[string]*sourceWorker{}, now: func() time.Time { return now().Round(0) }}
 	for _, src := range sources {
 		c.workers[src.ID] = &sourceWorker{source: src, kick: make(chan struct{}, 1)}
 	}
@@ -47,7 +48,7 @@ func (c *collector) refresh(id string) map[string]workerState {
 			continue
 		}
 		w.mu.Lock()
-		if w.state.InFlightSince == nil && !c.now().Before(w.state.NextAt) {
+		if w.state.InFlightSince == nil && !c.now().Before(w.state.NotBefore) {
 			select {
 			case w.kick <- struct{}{}:
 				w.state.Queued = true
@@ -59,7 +60,7 @@ func (c *collector) refresh(id string) map[string]workerState {
 	return c.states()
 }
 func (c *collector) run(ctx context.Context) error {
-	data, err := c.store.load()
+	states, err := c.store.loadStates()
 	if err != nil {
 		return err
 	}
@@ -68,9 +69,10 @@ func (c *collector) run(ctx context.Context) error {
 	var wg sync.WaitGroup
 	errs := make(chan error, len(c.workers))
 	for id, w := range c.workers {
-		state := data.Sources[id]
+		state := states[id]
 		w.mu.Lock()
 		w.state.NextAt = state.NextAt
+		w.state.NotBefore = state.NotBefore
 		w.state.Failures = state.Failures
 		w.mu.Unlock()
 		wg.Add(1)
@@ -94,18 +96,26 @@ func (c *collector) runWorker(ctx context.Context, w *sourceWorker) error {
 	for {
 		w.mu.Lock()
 		next := w.state.NextAt
+		if w.state.NotBefore.After(next) {
+			next = w.state.NotBefore
+		}
 		w.mu.Unlock()
 		delay := next.Sub(c.now())
 		if delay < 0 {
 			delay = 0
 		}
+		if delay > w.source.Cadence {
+			delay = w.source.Cadence
+		}
 		timer := time.NewTimer(delay)
+		manual := false
 		select {
 		case <-ctx.Done():
 			timer.Stop()
 			return nil
 		case <-timer.C:
 		case <-w.kick:
+			manual = true
 			timer.Stop()
 		}
 		if ctx.Err() != nil {
@@ -114,34 +124,49 @@ func (c *collector) runWorker(ctx context.Context, w *sourceWorker) error {
 		now := c.now()
 		w.mu.Lock()
 		w.state.Queued = false
-		if now.Before(w.state.NextAt) {
+		if now.Before(w.state.NotBefore) || (!manual && now.Before(w.state.NextAt)) {
 			w.mu.Unlock()
 			continue
 		}
 		w.state.InFlightSince = &now
 		w.state.NextAt = now.Add(w.source.Cadence)
+		w.state.NotBefore = time.Time{}
+		if w.source.Provider == muse {
+			w.state.NotBefore = w.state.NextAt
+		}
+		notBefore := w.state.NotBefore
 		failures := w.state.Failures
 		w.mu.Unlock()
-		if err := c.store.reserve(w.source.ID, now.Add(w.source.Cadence), failures); err != nil {
+		if err := c.store.reserve(w.source.ID, now.Add(w.source.Cadence), notBefore, failures); err != nil {
 			return err
 		}
 		p := w.source.Probe(probeContext{Context: ctx, Now: c.now})
+		if ctx.Err() != nil {
+			return nil
+		}
 		p.SourceID = w.source.ID
 		p.StartedAt = now
 		p.At = c.now()
 		next, failures = nextProbe(p.At, w.source.Cadence, failures, p.Outcome)
+		if failures > 0 || w.source.Provider == muse {
+			p.NotBefore = next
+		}
 		if err := c.store.append(p, next, failures); err != nil {
 			return err
 		}
 		w.mu.Lock()
 		w.state.InFlightSince = nil
 		w.state.NextAt = next
+		w.state.NotBefore = p.NotBefore
 		w.state.Failures = failures
 		w.mu.Unlock()
 	}
 }
 func nextProbe(now time.Time, interval time.Duration, failures int, outcome probeOutcome) (time.Time, int) {
 	if m, failed := outcome.(missing); failed {
+		if m.Code == "credential_missing" || m.Code == "api_key" || m.Code == "unsupported_source" {
+			return now.Add(interval), 0
+		}
 		failures++
 		shift := failures - 1
 		if shift > 6 {

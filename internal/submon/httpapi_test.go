@@ -11,7 +11,7 @@ import (
 
 func testAPI(t *testing.T) (http.Handler, *store, string) {
 	t.Helper()
-	s, err := openStore(t.TempDir())
+	s, err := openStore(testDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +95,7 @@ func TestHTTPAuthenticationHostOriginAndEmail(t *testing.T) {
 	}
 }
 func TestHTTPCookieExpiryAndMalformedRequests(t *testing.T) {
-	s, err := openStore(t.TempDir())
+	s, err := openStore(testDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -9,6 +9,8 @@
   let snapshot = null;
   let connectionError = "";
   let view = null;
+  let committedSelection = null;
+  let authenticated = null;
   let requestVersion = 0;
   let lastFocus;
   let toastTimer;
@@ -30,7 +32,7 @@
   async function api(path, options = {}) {
     const response = await fetch(path, {credentials: 'same-origin', cache: 'no-store', ...options, headers: {'Content-Type': 'application/json', ...options.headers}});
     const data = await response.json();
-    if (response.status === 401) { snapshot = null; emails.clear(); login(); throw new Error('Autenticação necessária.'); }
+    if (response.status === 401) { authenticated = false; snapshot = null; view = null; committedSelection = null; emails.clear(); login(); throw new Error('Autenticação necessária.'); }
     if (!response.ok) throw new Error(data.message || 'Não foi possível consultar o monitor.');
     return data;
   }
@@ -47,36 +49,50 @@
     try {
       const response = await fetch('/session', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({key})});
       if (!response.ok) throw new Error('Chave inválida ou sessão indisponível.');
+      authenticated = true;
       await load();
     } catch (error) { const message = document.getElementById('login-error'); if (message) message.textContent = error.message; }
   });
-  function selectionKeys() {
+  function selectionKeys(data = snapshot, selection = state) {
     const byId = new Map();
-    for (const a of snapshot.accounts) {
-      if (a.provider !== state.provider || (state.account && a.id !== state.account) || (!state.account && !a.active)) continue;
-      for (const w of (state.account ? a.historyWindows : a.windows)) byId.set(w.id, w);
+    for (const a of data.accounts) {
+      if (a.provider !== selection.provider || (selection.account && a.id !== selection.account) || (!selection.account && !a.active)) continue;
+      for (const w of (selection.account ? a.historyWindows : a.windows)) byId.set(w.id, w);
     }
     return [...byId.values()];
   }
+  function selected() {
+    return Object.fromEntries(['provider', 'account', 'window', 'period', 'lookback', 'horizon', 'recurrence'].map(key => [key, state[key]]));
+  }
   async function load() {
     const version = ++requestVersion;
- root.setAttribute("aria-busy", "true");
+    const requested = selected();
+    root.setAttribute('aria-busy', 'true');
+    if (!snapshot || !view || JSON.stringify(requested) !== JSON.stringify(committedSelection)) render();
     try {
       const nextSnapshot = await api('/api/v1/snapshot');
       if (version !== requestVersion) return;
-      snapshot = nextSnapshot;
-      const keys = selectionKeys();
-      if (state.provider !== 'all' && !keys.some(w => w.id === state.window)) {
-        state.window = (keys.find(w => w.key.kind === 'weekly' && w.key.scope === 'all') || keys[0])?.id || 'weekly';
+      const keys = selectionKeys(nextSnapshot, requested);
+      if (requested.provider !== 'all' && !keys.some(w => w.id === requested.window)) {
+        requested.window = (keys.find(w => w.key.kind === 'weekly' && w.key.scope === 'all') || keys[0])?.id || 'weekly';
       }
-      const params = new URLSearchParams({provider: state.provider, account: state.account, window: state.window, period: state.period, lookback: state.lookback, horizon: state.horizon, recurrence: String(state.recurrence)});
+      const params = new URLSearchParams({...requested, recurrence: String(requested.recurrence)});
       const nextView = await api('/api/v1/view?' + params);
       if (version !== requestVersion) return;
+      snapshot = nextSnapshot;
       view = nextView;
+      Object.assign(state, requested);
+      committedSelection = requested;
+      authenticated = true;
       connectionError = "";
       render();
-    } catch (error) { if (snapshot) { connectionError = error.message; render(); toast(error.message); } }
- finally { if (version === requestVersion) root.setAttribute('aria-busy','false'); }
+    } catch (error) {
+      if (version !== requestVersion || authenticated === false) return;
+      if (committedSelection) Object.assign(state, committedSelection);
+      connectionError = error.message;
+      render();
+      toast(error.message);
+    } finally { if (version === requestVersion) root.setAttribute('aria-busy', 'false'); }
   }
   function header() {
     const active = snapshot.accounts.filter(a => a.active);
@@ -86,13 +102,13 @@
     return `<div class="topline"><span class="eyebrow">CLI Proxy · Assinaturas</span><span class="demo">Fontes nativas · Histórico local</span></div><div class="heading"><div><h1>${title}</h1><p class="subtitle">${subtitle}</p></div><div class="actions"><button class="btn btn-primary" data-action="refresh">Atualizar fontes</button></div></div><nav class="provider-tabs" aria-label="Provedores">${['all', ...snapshot.providers.map(p => p.provider)].map(p => `<button class="${state.provider === p ? 'active' : ''}" data-filter="${p}" aria-pressed="${state.provider === p}">${p === 'all' ? 'Todos' : name(p)} <span class="count">${p === 'all' ? active.length : snapshot.providers.find(row => row.provider === p).accountCount}</span></button>`).join('')}</nav><div class="summary-line"><span><strong>${active.length}</strong> contas atuais</span><span><strong>${loaded.length}</strong> com leitura</span><span>${snapshot.accounts.length - active.length} fora de sessão</span><span class="summary-end">${date(snapshot.generatedAt)} · São Paulo</span></div>`;
   }
   function sourceStatuses() {
-    return `<div class="source-status">${snapshot.sources.filter(s => state.provider === 'all' || state.provider === s.provider).filter(s => s.status !== 'ok' || s.inFlightSince || s.queued).map(s => `<p><strong>${esc(name(s.provider))}</strong> · ${esc(s.inFlightSince ? 'Consulta pendente desde ' + date(s.inFlightSince) : s.queued ? 'Consulta na fila' : s.message)}<br><span class="muted">Próxima consulta permitida ${date(s.nextAt)}. ${s.provider === 'muse' ? 'O mint pode emitir uma chave, que é descartada. Intervalo mínimo de 30 min.' : 'A CLI nativa cuida da renovação do login.'}</span></p>`).join('')}</div>`;
+    return `<div class="source-status">${snapshot.sources.filter(s => state.provider === 'all' || state.provider === s.provider).filter(s => s.status !== 'ok' || s.inFlightSince || s.queued).map(s => `<p><strong>${esc(name(s.provider))}</strong> · ${esc(s.inFlightSince ? 'Consulta pendente desde ' + date(s.inFlightSince) : s.queued ? 'Consulta na fila' : s.message)}<br><span class="muted">Coleta programada ${date(s.nextAt)}.${s.notBefore && !s.notBefore.startsWith('0001-') ? ' Bloqueio mínimo até ' + date(s.notBefore) + '.' : ''} ${s.provider === 'muse' ? 'O mint pode emitir uma chave, que é descartada. Intervalo mínimo de 30 min.' : 'A CLI nativa cuida da renovação do login.'}</span></p>`).join('')}</div>`;
   }
   function providers() {
-    return `<section class="providers" aria-label="Resumo por provedor">${snapshot.providers.filter(p => state.provider === 'all' || state.provider === p.provider).map(p => `<button class="provider-card" data-filter="${p.provider}"><span class="card-name"><span><i class="provider-mark">${esc(name(p.provider)[0])}</i><strong>${esc(name(p.provider))}</strong></span><span class="muted">${p.accountCount} contas · ${p.loadedCount} leituras</span></span>${p.windows.length ? p.windows.map(w => {
+    return `<section class="providers" aria-label="Resumo por provedor">${snapshot.providers.filter(p => state.provider === 'all' || state.provider === p.provider).map(p => `<article class="provider-card"><button class="card-name" data-filter="${p.provider}" aria-label="Ver ${esc(name(p.provider))}"><span><i class="provider-mark">${esc(name(p.provider)[0])}</i><strong>${esc(name(p.provider))}</strong></span><span class="muted">${p.accountCount} contas · ${p.loadedCount} leituras</span></button>${p.windows.length ? p.windows.map(w => {
       const accounts = w.total.contributors.map(id => snapshot.accounts.find(a => a.id === id)).filter(Boolean);
       return `<div class="window-summary"><div class="small muted">${esc(w.label)} · ${esc(scopeLabel(w.key.scope))} · ${esc(basisLabel(w.key.capacityBasis))}</div><div class="provider-value num">${w.total.remaining == null ? 'Sem leitura' : fmt(w.total.remaining) + '%'} <small>${w.total.remaining == null ? 'Nenhuma conta contribui com saldo conhecido.' : 'de ' + fmt(w.total.capacity) + '% normalizados'}</small></div><div class="segments">${accounts.map(a => { const reading = a.windows.find(row => row.id === keyID(w.key)); return `<span class="track" tabindex="0" title="${esc(a.identity.label)} · ${percent(reading?.remaining)} · ${freshness(reading?.freshness)}" aria-label="${esc(a.identity.label)} ${percent(reading?.remaining)} ${freshness(reading?.freshness)}"><span style="width:${reading?.remaining || 0}%;background:${reading?.remaining === 0 ? 'var(--cp-bad)' : 'var(--cp-accent)'}"></span></span>`; }).join('')}</div><small>${w.total.missing.length ? w.total.missing.length + ' contas sem esta leitura · ' : ''}${accounts.some(a => a.freshness !== 'fresh') ? 'Inclui leitura desatualizada · ' : ''}Reset ${reset(w.nextReset)}</small></div>`;
-    }).join('') : '<div class="provider-value">—<small>Sem leitura válida. Não é saldo zero.</small></div>'}<p class="aside-caption">Percentuais de janelas e planos distintos permanecem separados.</p></button>`).join('')}</section>`;
+    }).join('') : '<div class="provider-value">—<small>Sem leitura válida. Não é saldo zero.</small></div>'}<p class="aside-caption">Percentuais de janelas e planos distintos permanecem separados.</p></article>`).join('')}</section>`;
   }
   function keyID(key) {
     for (const a of snapshot.accounts) for (const w of a.windows) if (JSON.stringify(w.key) === JSON.stringify(key)) return w.id;
@@ -163,6 +179,10 @@
   }
   function render() {
     tip.style.display = 'none';
+    if (!snapshot || !view || JSON.stringify(selected()) !== JSON.stringify(committedSelection)) {
+      screen.innerHTML = `<section class="panel empty"><h1>Monitor de assinaturas</h1><p role="alert">${esc(connectionError || 'Carregando seleção…')}</p>${connectionError ? '<button class="btn" data-action="retry">Tentar novamente</button>' : ''}</section>`;
+      return;
+    }
     for (const button of root.querySelectorAll('[data-nav]')) { if (button.dataset.nav === state.screen) button.setAttribute('aria-current', 'page'); else button.removeAttribute('aria-current'); }
     const content = state.screen === 'overview' ? overview() : state.screen === 'accounts' ? providers() + selectors() + ledger() : state.screen === 'history' ? historyScreen() : forecastScreen();
     screen.innerHTML = header() + (connectionError ? `<p class="notice" role="alert">${esc(connectionError)} Dados preservados da consulta em ${date(snapshot.generatedAt)}. Os estados abaixo pertencem àquela consulta.</p>` : "") + sourceStatuses() + content + '<footer class="footer"><span>Observações persistidas · horários de São Paulo</span><span>p.p. = pontos percentuais da cota</span></footer>';
@@ -177,7 +197,7 @@
     const kind = host.dataset.chart;
     const group = view.groups.find(g => g.accounts.includes(account));
     const now = new Date(view.generatedAt).getTime();
-    const series = kind === 'rate' ? account.rate.map(p => ({t: new Date(p.to).getTime(), value: p.ppH, note: `Média de 1 hora · ${date(p.from)} a ${date(p.to)} · cobertura ${fmt(p.coverage * 100)}%`, breakBefore: p.breakBefore})) : kind === 'bars' ? (state.period === '24h' ? account.hourly : account.daily).map(b => ({t: new Date(b.from).getTime(), value: b.coverage > 0 ? b.consumedPp : null, complete: b.complete, note: `${date(b.from)} a ${date(b.to)} · cobertura ${fmt(b.coverage * 100)}% · ${fmt(b.unattributedPp)} p.p. cruzam a fronteira`})) : account.observed.map(p => ({t: new Date(p.at).getTime(), value: p.remaining, note: 'Observação persistida. Intervalos entre amostras não são leituras exatas.'}));
+    const series = kind === 'rate' ? account.rate.map(p => ({t: new Date(p.to).getTime(), value: p.ppH, note: `Média de 1 hora · ${date(p.from)} a ${date(p.to)} · cobertura ${fmt(p.coverage * 100)}%`, breakBefore: p.breakBefore})) : kind === 'bars' ? (state.period === '24h' ? account.hourly : account.daily).map(b => ({t: new Date(b.from).getTime(), value: b.coverage > 0 ? b.consumedPp : null, complete: b.complete, note: `${date(b.from)} a ${date(b.to)} · cobertura ${fmt(b.coverage * 100)}% · ${b.hasUnattributed ? 'Há intervalos não atribuídos nesta fronteira; consulte a lista abaixo' : 'Sem intervalos cruzando a fronteira'}`})) : account.observed.map(p => ({t: new Date(p.at).getTime(), value: p.remaining, note: 'Observação persistida. Intervalos entre amostras não são leituras exatas.'}));
     const future = kind === 'remaining' ? account.forecast.map(p => ({t: new Date(p.at).getTime(), value: p.remaining, note: p.assumption === 'reported' ? 'Reset informado pelo provedor' : p.assumption === 'inferred' ? 'Recorrência inferida' : 'Projeção estimada'})) : [];
     const all = [...series, ...future];
     if (!all.some(p => p.value != null)) { host.innerHTML = '<div class="chart-empty">Sem histórico observado nesta seleção.<br>O monitor continua coletando com o painel fechado.</div>'; return; }
@@ -284,6 +304,7 @@
     const button = event.target.closest('button');
     if (!button || button.disabled) return;
     const d = button.dataset;
+    if (d.action === 'retry') { await load(); return; }
     if (d.action === 'close-modal') { closeModal(); return; }
     if (!snapshot) return;
     try {
@@ -333,6 +354,6 @@
     else if (!event.shiftKey && (document.activeElement === last || document.activeElement.classList.contains('modal'))) { event.preventDefault(); first.focus(); }
   });
   new ResizeObserver(() => { if (snapshot && view) drawCharts(); }).observe(screen);
-  setInterval(() => { if (snapshot && !document.activeElement?.matches('input,select') && document.getElementById('modal-backdrop').hidden) load(); }, 30000);
+  setInterval(() => { if (authenticated !== false && !screen.contains(document.activeElement) && !screen.querySelector('details[open]') && document.getElementById('modal-backdrop').hidden) load(); }, 30000);
   load();
 })();

@@ -127,7 +127,7 @@ func TestQuotaTransportAndSanitizedErrors(t *testing.T) {
 	r := quotaReader{client: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
 		return &http.Response{StatusCode: 429, Header: http.Header{"Retry-After": []string{"3600"}}, Body: io.NopCloser(strings.NewReader(`fixture-private-secret`))}, nil
 	})}}
-	_, m := r.request(context.Background(), testTime(), "https://fixture.test/quota", "fixture-token", nil, false)
+	_, m := r.request(context.Background(), testTime, "https://fixture.test/quota", "fixture-token", nil, false)
 	if m == nil || m.Status != rateLimited || !m.RetryAt.Equal(testTime().Add(time.Hour)) {
 		t.Fatal("backoff", m)
 	}

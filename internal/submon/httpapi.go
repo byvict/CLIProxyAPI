@@ -207,12 +207,12 @@ func (a *api) snapshot(w http.ResponseWriter, r *http.Request) {
 		apiError(w, 400, "Formato inválido.")
 		return
 	}
-	data, err := a.store.load()
+	now := a.now()
+	data, err := a.store.loadSince(now.Add(-24 * time.Hour))
 	if err != nil {
 		apiError(w, 500, "Não foi possível ler o histórico.")
 		return
 	}
-	now := a.now()
 	s := makeSnapshot(data, a.collector.states(), now)
 	if format == "t3-usage" {
 		apiJSON(w, 200, usageSnapshot(s, now))
@@ -241,12 +241,13 @@ func (a *api) view(w http.ResponseWriter, r *http.Request) {
 		apiError(w, 400, "Período inválido.")
 		return
 	}
-	data, err := a.store.load()
+	now := a.now()
+	data, err := a.store.loadSince(now.Add(-period))
 	if err != nil {
 		apiError(w, 500, "Não foi possível ler o histórico.")
 		return
 	}
-	v, err := makeView(data, a.collector.states(), a.now(), viewSelection{Provider: q.Get("provider"), Account: q.Get("account"), Window: q.Get("window"), Period: period, Lookback: lookback, Horizon: horizon, Recurrence: recurrence})
+	v, err := makeView(data, a.collector.states(), now, viewSelection{Provider: q.Get("provider"), Account: q.Get("account"), Window: q.Get("window"), Period: period, Lookback: lookback, Horizon: horizon, Recurrence: recurrence})
 	if err != nil {
 		apiError(w, 400, "Seleção inválida.")
 		return
@@ -268,18 +269,16 @@ func (a *api) refresh(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if body.Account != "" {
-		data, err := a.store.load()
+		sources, err := a.store.currentSources(body.Account)
 		if err != nil {
 			apiError(w, 500, "Não foi possível ler a conta.")
 			return
 		}
 		found := false
-		for _, b := range data.Bindings {
-			if b.AccountID == body.Account && b.To == nil {
-				if _, exists := a.collector.workers[b.SourceID]; exists {
-					a.collector.refresh(b.SourceID)
-					found = true
-				}
+		for _, source := range sources {
+			if _, exists := a.collector.workers[source]; exists {
+				a.collector.refresh(source)
+				found = true
 			}
 		}
 		if !found {
@@ -297,22 +296,16 @@ func (a *api) email(w http.ResponseWriter, r *http.Request) {
 		apiError(w, 404, "Conta não encontrada.")
 		return
 	}
-	data, err := a.store.load()
+	email, err := a.store.emailFor(id)
 	if err != nil {
 		apiError(w, 500, "Não foi possível ler a conta.")
 		return
 	}
-	for _, account := range data.Accounts {
-		if account.ID == id {
-			if account.Email == "" {
-				apiError(w, 404, "E-mail não informado pelo provedor.")
-				return
-			}
-			apiJSON(w, 200, struct {
-				Email string `json:"email"`
-			}{account.Email})
-			return
-		}
+	if email == "" {
+		apiError(w, 404, "E-mail não informado pelo provedor.")
+		return
 	}
-	apiError(w, 404, "Conta não encontrada.")
+	apiJSON(w, 200, struct {
+		Email string `json:"email"`
+	}{email})
 }

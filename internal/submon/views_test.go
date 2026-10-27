@@ -8,7 +8,7 @@ import (
 )
 
 func TestSnapshotPrivacyFreshnessAndCurrentNativeAccount(t *testing.T) {
-	s, err := openStore(t.TempDir())
+	s, err := openStore(testDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +93,7 @@ func TestRateDoesNotBorrowPreviousCycle(t *testing.T) {
 }
 
 func TestHistoryCannotCrossInactiveSourceBinding(t *testing.T) {
-	s, err := openStore(t.TempDir())
+	s, err := openStore(testDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +125,7 @@ func TestHistoryCannotCrossInactiveSourceBinding(t *testing.T) {
 }
 
 func TestHistoricalWindowRemainsSelectableAfterCapacityChange(t *testing.T) {
-	s, err := openStore(t.TempDir())
+	s, err := openStore(testDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +158,7 @@ func TestHistoricalWindowRemainsSelectableAfterCapacityChange(t *testing.T) {
 }
 
 func TestUsageCheckedAtUsesOldestContributingObservation(t *testing.T) {
-	s, err := openStore(t.TempDir())
+	s, err := openStore(testDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}

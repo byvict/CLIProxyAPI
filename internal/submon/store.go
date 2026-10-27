@@ -42,8 +42,9 @@ type storedSample struct {
 	sample
 }
 type sourceState struct {
-	NextAt   time.Time
-	Failures int
+	NextAt    time.Time
+	NotBefore time.Time
+	Failures  int
 }
 type storedData struct {
 	Accounts []storedAccount
@@ -109,10 +110,10 @@ func (s *store) migrate() error {
 	if err := s.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	if version > 1 {
+	if version > 2 {
 		return errors.New("monitor database schema is newer than this binary")
 	}
-	if version == 1 {
+	if version == 2 {
 		return nil
 	}
 	tx, err := s.db.Begin()
@@ -120,7 +121,8 @@ func (s *store) migrate() error {
 		return err
 	}
 	defer rollback(tx)
-	_, err = tx.Exec(`
+	if version == 0 {
+		_, err = tx.Exec(`
  CREATE TABLE accounts(id TEXT PRIMARY KEY,provider TEXT NOT NULL,basis TEXT NOT NULL,label TEXT NOT NULL,email TEXT NOT NULL);
  CREATE TABLE source_bindings(source_id TEXT NOT NULL,account_id TEXT NOT NULL REFERENCES accounts(id),from_ns INTEGER NOT NULL,to_ns INTEGER,PRIMARY KEY(source_id,from_ns));
  CREATE UNIQUE INDEX active_source ON source_bindings(source_id) WHERE to_ns IS NULL;
@@ -130,6 +132,18 @@ func (s *store) migrate() error {
  CREATE INDEX reading_account_window_time ON readings(account_id,window_id,at_ns);
  CREATE TABLE source_states(source_id TEXT PRIMARY KEY,next_ns INTEGER NOT NULL,failures INTEGER NOT NULL);
  PRAGMA user_version=1;`)
+		if err != nil {
+			return fmt.Errorf("migrate monitor database: %w", err)
+		}
+	}
+	_, err = tx.Exec(`
+ ALTER TABLE source_states ADD COLUMN not_before_ns INTEGER NOT NULL DEFAULT 0;
+ UPDATE source_states SET not_before_ns=next_ns;
+ CREATE TABLE window_heads(account_id TEXT NOT NULL,window_id TEXT NOT NULL,attempt_id TEXT NOT NULL REFERENCES attempts(id),PRIMARY KEY(account_id,window_id));
+ INSERT INTO window_heads SELECT account_id,window_id,attempt_id FROM readings r WHERE rowid=(SELECT rowid FROM readings latest WHERE latest.account_id=r.account_id AND latest.window_id=r.window_id ORDER BY at_ns DESC,attempt_id DESC LIMIT 1);
+ CREATE INDEX reading_time ON readings(at_ns);
+ CREATE INDEX attempt_time ON attempts(at_ns);
+ PRAGMA user_version=2;`)
 	if err != nil {
 		return fmt.Errorf("migrate monitor database: %w", err)
 	}
@@ -141,8 +155,8 @@ func attemptID(p probe) string {
 	}
 	return p.SourceID + "/" + p.StartedAt.UTC().Format(time.RFC3339Nano)
 }
-func (s *store) reserve(id string, next time.Time, failures int) error {
-	_, err := s.db.Exec(`INSERT INTO source_states VALUES(?,?,?) ON CONFLICT(source_id) DO UPDATE SET next_ns=excluded.next_ns,failures=excluded.failures`, id, next.UnixNano(), failures)
+func (s *store) reserve(id string, next, notBefore time.Time, failures int) error {
+	_, err := s.db.Exec(`INSERT INTO source_states VALUES(?,?,?,?) ON CONFLICT(source_id) DO UPDATE SET next_ns=excluded.next_ns,failures=excluded.failures,not_before_ns=excluded.not_before_ns`, id, next.UnixNano(), failures, timeNS(notBefore))
 	return err
 }
 func (s *store) append(p probe, next time.Time, failures int) error {
@@ -162,10 +176,23 @@ func (s *store) append(p probe, next time.Time, failures int) error {
 	accountID := ""
 	st, code := ok, ""
 	effects, _ := json.Marshal(p.SideEffects)
+	var i identity
 	switch result := p.Outcome.(type) {
 	case reading:
-		accountID = result.Identity.accountID()
-		i := result.Identity
+		i = result.Identity
+	case missing:
+		i = result.Identity
+		st, code = result.Status, result.Code
+		if st == identityUnverified || code == "credential_missing" || code == "api_key" || code == "unsupported_source" {
+			if _, err = tx.Exec("UPDATE source_bindings SET to_ns=? WHERE source_id=? AND to_ns IS NULL", p.At.UnixNano(), p.SourceID); err != nil {
+				return err
+			}
+		}
+	default:
+		return errors.New("missing probe outcome")
+	}
+	if i.Subject != "" {
+		accountID = i.accountID()
 		if _, err = tx.Exec(`INSERT INTO accounts VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET email=excluded.email`, accountID, i.Provider, i.Basis, string(i.Provider)+" · "+accountID[:6], i.Email); err != nil {
 			return err
 		}
@@ -175,15 +202,6 @@ func (s *store) append(p probe, next time.Time, failures int) error {
 		if _, err = tx.Exec(`INSERT INTO source_bindings(source_id,account_id,from_ns) SELECT ?,?,? WHERE NOT EXISTS(SELECT 1 FROM source_bindings WHERE source_id=? AND to_ns IS NULL)`, p.SourceID, accountID, p.At.UnixNano(), p.SourceID); err != nil {
 			return err
 		}
-	case missing:
-		st, code = result.Status, result.Code
-		if st == identityUnverified || code == "credential_missing" || code == "api_key" || code == "unsupported_source" {
-			if _, err = tx.Exec("UPDATE source_bindings SET to_ns=? WHERE source_id=? AND to_ns IS NULL", p.At.UnixNano(), p.SourceID); err != nil {
-				return err
-			}
-		}
-	default:
-		return errors.New("missing probe outcome")
 	}
 	if _, err = tx.Exec("INSERT INTO attempts VALUES(?,?,?,?,?,?,?)", id, p.SourceID, accountID, p.At.UnixNano(), st, code, string(effects)); err != nil {
 		return err
@@ -194,15 +212,85 @@ func (s *store) append(p probe, next time.Time, failures int) error {
 			if _, err = tx.Exec("INSERT INTO readings VALUES(?,?,?,?,?)", id, accountID, w.Key.id(), p.At.UnixNano(), string(b)); err != nil {
 				return err
 			}
+			if _, err = tx.Exec(`INSERT INTO window_heads VALUES(?,?,?) ON CONFLICT(account_id,window_id) DO UPDATE SET attempt_id=excluded.attempt_id`, accountID, w.Key.id(), id); err != nil {
+				return err
+			}
 		}
 	}
-	if _, err = tx.Exec(`INSERT INTO source_states VALUES(?,?,?) ON CONFLICT(source_id) DO UPDATE SET next_ns=excluded.next_ns,failures=excluded.failures`, p.SourceID, next.UnixNano(), failures); err != nil {
+	if _, err = tx.Exec(`INSERT INTO source_states VALUES(?,?,?,?) ON CONFLICT(source_id) DO UPDATE SET next_ns=excluded.next_ns,failures=excluded.failures,not_before_ns=excluded.not_before_ns`, p.SourceID, next.UnixNano(), failures, timeNS(p.NotBefore)); err != nil {
 		return err
 	}
 	return tx.Commit()
 }
-func (s *store) load() (storedData, error) {
+func timeNS(t time.Time) int64 {
+	if t.IsZero() {
+		return 0
+	}
+	return t.UnixNano()
+}
+
+func (s *store) loadStates() (map[string]sourceState, error) {
+	rows, err := s.db.Query("SELECT source_id,next_ns,failures,not_before_ns FROM source_states")
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	states := map[string]sourceState{}
+	for rows.Next() {
+		var id string
+		var next, notBefore int64
+		var state sourceState
+		if err = rows.Scan(&id, &next, &state.Failures, &notBefore); err != nil {
+			return nil, err
+		}
+		state.NextAt = time.Unix(0, next)
+		if notBefore != 0 {
+			state.NotBefore = time.Unix(0, notBefore)
+		}
+		states[id] = state
+	}
+	return states, rows.Err()
+}
+
+func (s *store) emailFor(id string) (string, error) {
+	var email string
+	err := s.db.QueryRow("SELECT email FROM accounts WHERE id=?", id).Scan(&email)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return email, err
+}
+
+func (s *store) currentSources(id string) ([]string, error) {
+	rows, err := s.db.Query("SELECT source_id FROM source_bindings WHERE account_id=? AND to_ns IS NULL", id)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := []string{}
+	for rows.Next() {
+		var source string
+		if err = rows.Scan(&source); err != nil {
+			return nil, err
+		}
+		out = append(out, source)
+	}
+	return out, rows.Err()
+}
+
+func (s *store) load() (storedData, error) { return s.loadSince(time.Time{}) }
+
+func (s *store) loadSince(from time.Time) (storedData, error) {
 	data := storedData{Accounts: []storedAccount{}, Bindings: []binding{}, Attempts: []storedAttempt{}, Samples: []storedSample{}, Sources: map[string]sourceState{}}
+	readingsSQL := "SELECT account_id,attempt_id,at_ns,reading FROM readings"
+	attemptsSQL := "SELECT id,source_id,account_id,at_ns,status,code,side_effects FROM attempts"
+	if !from.IsZero() {
+		cutoff := from.UnixNano()
+		readingsSQL += fmt.Sprintf(" WHERE at_ns>=%d UNION SELECT r.account_id,r.attempt_id,r.at_ns,r.reading FROM readings r JOIN window_heads h ON h.account_id=r.account_id AND h.window_id=r.window_id AND h.attempt_id=r.attempt_id", cutoff)
+		attemptsSQL += fmt.Sprintf(" WHERE at_ns>=%d OR id IN (SELECT attempt_id FROM window_heads) OR id IN (SELECT (SELECT a.id FROM attempts a WHERE a.source_id=s.source_id ORDER BY a.at_ns DESC,a.id DESC LIMIT 1) FROM source_states s)", cutoff)
+	}
+	readingsSQL += " ORDER BY at_ns,attempt_id"
+	attemptsSQL += " ORDER BY at_ns,id"
 	tx, err := s.db.BeginTx(context.Background(), &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return data, err
@@ -235,7 +323,7 @@ func (s *store) load() (storedData, error) {
 			data.Bindings = append(data.Bindings, b)
 			return nil
 		}},
-		{"SELECT id,source_id,account_id,at_ns,status,code,side_effects FROM attempts ORDER BY at_ns,id", func(r *sql.Rows) error {
+		{attemptsSQL, func(r *sql.Rows) error {
 			var a storedAttempt
 			var ns int64
 			var effects string
@@ -249,7 +337,7 @@ func (s *store) load() (storedData, error) {
 			data.Attempts = append(data.Attempts, a)
 			return nil
 		}},
-		{"SELECT account_id,attempt_id,at_ns,reading FROM readings ORDER BY at_ns,attempt_id,window_id", func(r *sql.Rows) error {
+		{readingsSQL, func(r *sql.Rows) error {
 			var s storedSample
 			var ns int64
 			var text string
@@ -263,14 +351,18 @@ func (s *store) load() (storedData, error) {
 			data.Samples = append(data.Samples, s)
 			return nil
 		}},
-		{"SELECT source_id,next_ns,failures FROM source_states", func(r *sql.Rows) error {
+		{"SELECT source_id,next_ns,failures,not_before_ns FROM source_states", func(r *sql.Rows) error {
 			var id string
 			var ns int64
+			var notBefore int64
 			var s sourceState
-			if err := r.Scan(&id, &ns, &s.Failures); err != nil {
+			if err := r.Scan(&id, &ns, &s.Failures, &notBefore); err != nil {
 				return err
 			}
 			s.NextAt = time.Unix(0, ns)
+			if notBefore != 0 {
+				s.NotBefore = time.Unix(0, notBefore)
+			}
 			data.Sources[id] = s
 			return nil
 		}},

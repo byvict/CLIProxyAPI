@@ -37,12 +37,12 @@ type ratePoint struct {
 	Coverage    float64   `json:"coverage"`
 }
 type consumptionBin struct {
-	From           time.Time `json:"from"`
-	To             time.Time `json:"to"`
-	ConsumedPp     float64   `json:"consumedPp"`
-	UnattributedPp float64   `json:"unattributedPp"`
-	Coverage       float64   `json:"coverage"`
-	Complete       bool      `json:"complete"`
+	From            time.Time `json:"from"`
+	To              time.Time `json:"to"`
+	ConsumedPp      float64   `json:"consumedPp"`
+	HasUnattributed bool      `json:"hasUnattributed"`
+	Coverage        float64   `json:"coverage"`
+	Complete        bool      `json:"complete"`
 }
 type heatCell struct {
 	Weekday    int     `json:"weekday"`
@@ -91,7 +91,7 @@ func emptyAnalysis() analysis {
 	return analysis{Observed: []chartPoint{}, Intervals: []deltaInterval{}, Rate: []ratePoint{}, Hourly: []consumptionBin{}, Daily: []consumptionBin{}, Heatmap: []heatCell{}, Forecast: []forecastPoint{}, Unattributed: []deltaInterval{}, UnusedCycles: []unusedCycle{}, Insufficient: "Histórico insuficiente. Aguarde pelo menos três leituras contínuas."}
 }
 func sameReset(a, b *time.Time) bool {
-	return (a == nil && b == nil) || (a != nil && b != nil && a.Equal(*b))
+	return (a == nil && b == nil) || (a != nil && b != nil && a.Sub(*b).Abs() <= time.Minute)
 }
 func continuous(a, b sample, maxGap time.Duration) bool {
 	return a.Window.Key == b.Window.Key && a.Window.Capacity == b.Window.Capacity && a.Window.Remaining != nil && b.Window.Remaining != nil && b.At.After(a.At) && b.At.Sub(a.At) <= maxGap && *b.Window.Remaining <= *a.Window.Remaining && sameReset(a.Window.ResetsAt, b.Window.ResetsAt) && (a.Window.ResetsAt == nil || a.Window.ResetsAt.After(b.At))
@@ -117,7 +117,15 @@ func analyze(input []sample, o analysisOptions) analysis {
 	if len(input) == 0 {
 		return a
 	}
-	samples := append([]sample(nil), input...)
+	samples := make([]sample, 0, len(input))
+	for _, s := range input {
+		if !s.At.After(o.Now) {
+			samples = append(samples, s)
+		}
+	}
+	if len(samples) == 0 {
+		return a
+	}
 	sort.SliceStable(samples, func(i, j int) bool { return samples[i].At.Before(samples[j].At) })
 	start := o.Now.Add(-o.Period)
 	maxGap := 2 * o.Cadence
@@ -271,11 +279,11 @@ func bins(intervals []deltaInterval, from, to time.Time, daily bool) []consumpti
 			if !d.From.Before(start) && !d.To.After(end) {
 				b.ConsumedPp += d.ConsumedPp
 			} else {
-				b.UnattributedPp += d.ConsumedPp
+				b.HasUnattributed = true
 			}
 		}
 		b.Coverage = fraction(seconds, end.Sub(start).Seconds())
-		b.Complete = b.Coverage >= 1-1e-9 && b.UnattributedPp == 0
+		b.Complete = b.Coverage >= 1-1e-9 && !b.HasUnattributed
 		out = append(out, b)
 	}
 	return out

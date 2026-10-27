@@ -37,12 +37,12 @@ func retryAfter(value string, now time.Time) time.Time {
 	if seconds, err := strconv.ParseInt(value, 10, 64); err == nil && seconds > 0 && seconds < 31536000 {
 		return now.Add(time.Duration(seconds) * time.Second)
 	}
-	if t, err := http.ParseTime(value); err == nil && t.After(now) {
+	if t, err := http.ParseTime(value); err == nil && t.After(now) && t.Before(now.Add(365*24*time.Hour)) {
 		return t
 	}
 	return time.Time{}
 }
-func (r quotaReader) request(ctx context.Context, now time.Time, url, access string, headers map[string]string, post bool) ([]byte, *missing) {
+func (r quotaReader) request(ctx context.Context, now func() time.Time, url, access string, headers map[string]string, post bool) ([]byte, *missing) {
 	method := http.MethodGet
 	var body io.Reader
 	if post {
@@ -74,7 +74,7 @@ func (r quotaReader) request(ctx context.Context, now time.Time, url, access str
 		case 429:
 			st = rateLimited
 		}
-		return nil, &missing{Status: st, Code: "http_" + strconv.Itoa(res.StatusCode), RetryAt: retryAfter(res.Header.Get("Retry-After"), now)}
+		return nil, &missing{Status: st, Code: "http_" + strconv.Itoa(res.StatusCode), RetryAt: retryAfter(res.Header.Get("Retry-After"), now())}
 	}
 	b, err := io.ReadAll(io.LimitReader(res.Body, 2*1024*1024+1))
 	if err != nil {
@@ -100,14 +100,17 @@ func (r quotaReader) probe(c probeContext, p provider) probe {
 	var absent *missing
 	switch p {
 	case codex:
-		body, absent = r.request(c.Context, c.Now(), "https://chatgpt.com/backend-api/wham/usage", cred.Access, map[string]string{"ChatGPT-Account-Id": cred.Account, "User-Agent": "codex-cli"}, false)
+		body, absent = r.request(c.Context, c.Now, "https://chatgpt.com/backend-api/wham/usage", cred.Access, map[string]string{"ChatGPT-Account-Id": cred.Account, "User-Agent": "codex-cli"}, false)
 	case grok:
-		body, absent = r.request(c.Context, c.Now(), "https://cli-chat-proxy.grok.com/v1/billing?format=credits", cred.Access, nil, false)
+		body, absent = r.request(c.Context, c.Now, "https://cli-chat-proxy.grok.com/v1/billing?format=credits", cred.Access, nil, false)
 	case claude:
 		headers := map[string]string{"anthropic-beta": "oauth-2025-04-20", "User-Agent": "claude-code"}
-		profile, profileMissing := r.request(c.Context, c.Now(), "https://api.anthropic.com/api/oauth/profile", cred.Access, headers, false)
+		profile, profileMissing := r.request(c.Context, c.Now, "https://api.anthropic.com/api/oauth/profile", cred.Access, headers, false)
 		if profileMissing != nil {
-			result.Outcome = missing{Status: identityUnverified, Code: profileMissing.Code, RetryAt: profileMissing.RetryAt}
+			if profileMissing.Code == "http_403" {
+				profileMissing.Status = identityUnverified
+			}
+			result.Outcome = *profileMissing
 			return result
 		}
 		cred.Identity = parseProfile(profile)
@@ -115,13 +118,14 @@ func (r quotaReader) probe(c probeContext, p provider) probe {
 			result.Outcome = missing{Status: identityUnverified}
 			return result
 		}
-		body, absent = r.request(c.Context, c.Now(), "https://api.anthropic.com/api/oauth/usage", cred.Access, headers, false)
+		body, absent = r.request(c.Context, c.Now, "https://api.anthropic.com/api/oauth/usage", cred.Access, headers, false)
 	case muse:
 		result.SideEffects = []string{"credential_exchange_requested"}
-		body, absent = r.request(c.Context, c.Now(), "https://api.meta.ai/muse-code/key", cred.Access, map[string]string{"x-api-version": "1.0.0", "Content-Type": "application/json", "User-Agent": "muse-code"}, true)
+		body, absent = r.request(c.Context, c.Now, "https://api.meta.ai/muse-code/key", cred.Access, map[string]string{"x-api-version": "1.0.0", "Content-Type": "application/json", "User-Agent": "muse-code"}, true)
 	}
 	result.At = c.Now()
 	if absent != nil {
+		absent.Identity = cred.Identity
 		result.Outcome = *absent
 		return result
 	}
@@ -131,7 +135,7 @@ func (r quotaReader) probe(c probeContext, p provider) probe {
 	}
 	windows, err := parseWindows(p, body)
 	if err != nil {
-		result.Outcome = missing{Status: invalidResponse}
+		result.Outcome = missing{Identity: cred.Identity, Status: invalidResponse}
 		return result
 	}
 	result.Outcome = reading{Identity: cred.Identity, Windows: accountWindowBasis(windows, cred.Identity)}

@@ -81,9 +81,10 @@ type reading struct {
 func (reading) probeOutcome() {}
 
 type missing struct {
-	Status  status
-	Code    string
-	RetryAt time.Time
+	Identity identity
+	Status   status
+	Code     string
+	RetryAt  time.Time
 }
 
 func (missing) probeOutcome() {}
@@ -93,6 +94,7 @@ type probe struct {
 	SourceID    string
 	StartedAt   time.Time
 	At          time.Time
+	NotBefore   time.Time
 	Outcome     probeOutcome
 	SideEffects []string
 }

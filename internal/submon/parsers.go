@@ -66,7 +66,7 @@ func parseCredential(p provider, b []byte) (credential, error) {
 			e = d["https://accounts.x.ai/sign-in"]
 		}
 		if e.Mode == "api_key" {
-			return c, errors.New("api_key")
+			return c, errCredentialAPIKey
 		}
 		c.Access = e.Access
 		c.Account = e.UserID
@@ -99,7 +99,7 @@ func parseCredential(p provider, b []byte) (credential, error) {
 		}
 	}
 	if strings.TrimSpace(c.Access) == "" {
-		return c, errors.New("credential_missing")
+		return c, errCredentialMissing
 	}
 	if p == codex || p == grok {
 		issuer, sub := tokenClaims(c.Access)
@@ -132,7 +132,8 @@ func parseProfile(b []byte) identity {
 }
 func parseMuse(b []byte) probeOutcome {
 	var d struct {
-		Email string `json:"user_email"`
+		Email string          `json:"user_email"`
+		Usage json.RawMessage `json:"subs_usage"`
 	}
 	if json.Unmarshal(b, &d) != nil {
 		return missing{Status: invalidResponse}
@@ -141,11 +142,14 @@ func parseMuse(b []byte) probeOutcome {
 	if email == "" {
 		return missing{Status: identityUnverified}
 	}
+	i := identity{Provider: muse, Basis: providerEmail, Subject: email, Email: email}
+	if len(d.Usage) == 0 || string(d.Usage) == "null" {
+		return missing{Identity: i, Status: unavailable, Code: "dormant"}
+	}
 	w, err := parseWindows(muse, b)
 	if err != nil {
-		return missing{Status: unavailable, Code: "dormant"}
+		return missing{Identity: i, Status: invalidResponse}
 	}
-	i := identity{Provider: muse, Basis: providerEmail, Subject: email, Email: email}
 	return reading{Identity: i, Windows: accountWindowBasis(w, i)}
 }
 func remaining(used *float64) (*float64, error) {
@@ -205,12 +209,18 @@ func parseWindows(p provider, b []byte) ([]windowReading, error) {
 			Reset   *int64   `json:"reset_at"`
 			Seconds int64    `json:"limit_window_seconds"`
 		}
+		type limitSet struct {
+			Primary   *limit `json:"primary_window"`
+			Secondary *limit `json:"secondary_window"`
+		}
 		var d struct {
-			Plan   string `json:"plan_type"`
-			Limits *struct {
-				Primary   *limit `json:"primary_window"`
-				Secondary *limit `json:"secondary_window"`
-			} `json:"rate_limit"`
+			Plan       string    `json:"plan_type"`
+			Limits     *limitSet `json:"rate_limit"`
+			Additional []struct {
+				Name   string    `json:"limit_name"`
+				Limits *limitSet `json:"rate_limit"`
+			} `json:"additional_rate_limits"`
+			CodeReview *limitSet `json:"code_review_rate_limits"`
 		}
 		if json.Unmarshal(b, &d) != nil || d.Limits == nil {
 			return nil, errShape
@@ -219,17 +229,40 @@ func parseWindows(p provider, b []byte) ([]windowReading, error) {
 		if basis == "" {
 			basis = "unknown-plan"
 		}
-		for _, l := range []*limit{d.Limits.Primary, d.Limits.Secondary} {
-			if l == nil {
-				continue
+		addSet := func(set *limitSet, scope, suffix string) error {
+			if set == nil || (set.Primary == nil && set.Secondary == nil) {
+				return errShape
 			}
-			kind := "session"
-			if l.Seconds == 604800 {
-				kind = "weekly"
-			} else if l.Seconds >= 86400 {
-				kind = "period"
+			for _, l := range []*limit{set.Primary, set.Secondary} {
+				if l == nil {
+					continue
+				}
+				kind := "session"
+				if l.Seconds == 604800 {
+					kind = "weekly"
+				} else if l.Seconds >= 86400 {
+					kind = "period"
+				}
+				if err := add(kind, scope, span(l.Seconds)+suffix, basis, l.Seconds, l.Used, unixTime(l.Reset)); err != nil {
+					return err
+				}
 			}
-			if err := add(kind, "all", span(l.Seconds), basis, l.Seconds, l.Used, unixTime(l.Reset)); err != nil {
+			return nil
+		}
+		if err := addSet(d.Limits, "all", ""); err != nil {
+			return nil, err
+		}
+		for _, additional := range d.Additional {
+			name := strings.TrimSpace(additional.Name)
+			if name == "" {
+				return nil, errShape
+			}
+			if err := addSet(additional.Limits, name, " "+name); err != nil {
+				return nil, err
+			}
+		}
+		if d.CodeReview != nil {
+			if err := addSet(d.CodeReview, "code-review", " code review"); err != nil {
 				return nil, err
 			}
 		}
@@ -267,7 +300,7 @@ func parseWindows(p provider, b []byte) ([]windowReading, error) {
 			case "weekly_all", "weekly_scoped":
 				kind = "weekly"
 			default:
-				continue
+				return nil, errShape
 			}
 			if l.Scope != nil {
 				scope = l.Scope.Model.ID

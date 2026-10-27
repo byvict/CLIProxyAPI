@@ -18,6 +18,18 @@ const failures = [];
 page.on('pageerror', error => failures.push(error.message));
 await page.route('**/*', route => new URL(route.request().url()).origin === new URL(baseURL).origin ? route.continue() : route.abort());
 const checks = [];
+let failSnapshot = true;
+let failView = false;
+await page.route('**/api/v1/snapshot', route => {
+  if (!failSnapshot) return route.continue();
+  failSnapshot = false;
+  return route.fulfill({status: 503, contentType: 'application/json', body: JSON.stringify({message: 'Snapshot fixture indisponível.'})});
+});
+await page.route('**/api/v1/view?*', route => {
+  if (!failView) return route.continue();
+  failView = false;
+  return route.fulfill({status: 503, contentType: 'application/json', body: JSON.stringify({message: 'View fixture indisponível.'})});
+});
 async function capture(label) {
   await page.screenshot({ path: join(evidenceDir, label + '.png'), fullPage: true });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth), false, label + ' has horizontal page overflow');
@@ -25,9 +37,17 @@ async function capture(label) {
   checks.push(label);
 }
 try {
+  await page.clock.install();
   await page.goto(baseURL);
+  await page.getByRole('button', { name: 'Tentar novamente', exact: true }).waitFor();
+  await capture('initial-snapshot-failure');
+  await page.clock.runFor(30001);
   await page.getByLabel('Chave do monitor', { exact: true }).fill((await readFile(keyFile, 'utf8')).trim());
+  failView = true;
   await page.getByRole('button', { name: 'Entrar', exact: true }).click();
+  await page.getByRole('button', { name: 'Tentar novamente', exact: true }).waitFor();
+  await capture('initial-view-failure');
+  await page.getByRole('button', { name: 'Tentar novamente', exact: true }).click();
   await page.getByRole('heading', { name: 'Monitor de assinaturas', exact: true }).waitFor();
   await page.locator('#cp-monitor[aria-busy="false"]').waitFor();
   await page.locator('.provider-card').first().waitFor();
@@ -37,10 +57,24 @@ try {
  await page.locator('#cp-monitor[aria-busy="false"]').waitFor();
   await page.locator('[data-chart="remaining"] svg').first().waitFor();
   await capture('desktop-remaining');
+  failView = true;
+  await page.locator('.provider-tabs [data-filter="codex"]').click();
+  await page.locator('#cp-monitor[aria-busy="false"]').waitFor();
+  assert.equal(await page.locator('.provider-tabs .active').getAttribute('data-filter'), 'claude', 'failed view changed the displayed provider');
+  assert.match(await page.locator('.chart-summary .scope-label').first().innerText(), /Claude/);
+  await capture('failed-selection-retains-claude');
   const chart = page.locator('[data-hit]').first();
   await chart.focus();
   await chart.press('ArrowRight');
   assert.match(await chart.getAttribute('aria-valuetext'), /Observação|Projeção|Reset|Recorrência/);
+  const focusedChart = await chart.elementHandle();
+  await page.clock.runFor(30001);
+  assert.equal(await focusedChart.evaluate(element => element.isConnected && document.activeElement === element), true, 'automatic refresh replaced the focused chart');
+  checks.push('automatic-refresh-preserves-focus');
+  await page.locator('.forecast-settings summary').first().click();
+  await page.clock.runFor(30001);
+  assert.equal(await page.locator('.forecast-settings[open]').count(), 1, 'automatic refresh closed forecast settings');
+  checks.push('automatic-refresh-preserves-settings');
   await page.getByRole('tab', { name: 'Ritmo de consumo' }).click();
   await page.locator('[data-chart="rate"] svg').first().waitFor();
   await capture('desktop-rate');

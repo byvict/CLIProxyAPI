@@ -29,16 +29,16 @@ The native CLI remains the only token renewal writer. The monitor reads one cred
 
 The Claude inherited environment token may have usage access without profile access. That source remains `identity_unverified`. Do not replace its identity with a cached profile or silently fall back to a different login. To run against a Keychain login instead, start this process without that environment token. This changes neither the credential store nor the environment of another process.
 
-An unverified identity receives no account history. Token rotation with the same principal preserves history. Switching accounts closes the old source binding. Old accounts remain inspectable as signed out. Email values appear only after an authenticated POST for the selected account.
+An unverified identity receives no account history. Token rotation with the same principal preserves history. Switching accounts closes the old source binding, even when quota is unavailable after the new identity is verified. Old accounts remain inspectable as signed out. Email values appear only after an authenticated POST for the selected account.
 
-Muse mint can issue an API key. The monitor discards it and records `credential_exchange_requested`. Its cadence is at least 30 minutes, including manual refresh. Other sources start at five minutes. Reservations and provider backoff survive restarts. Retry-After is a lower bound. There are no quota request deadlines, client total timeouts, response-header timeouts, or TLS handshake deadlines. Lifecycle cancellation stops outstanding work. Local Keychain acquisition has a ten-second bound.
+Muse mint can issue an API key. The monitor discards it and records `credential_exchange_requested`. Its cadence is at least 30 minutes, including manual refresh. Other sources start at five minutes. Manual refresh can advance their normal schedule, while provider backoff and the Muse floor remain binding. Local credential absence uses ordinary cadence. Reservations and provider backoff survive restarts. Valid Retry-After values are a lower bound measured from response receipt. Values over a year away are rejected as implausible. There are no quota request deadlines, client total timeouts, response-header timeouts, or TLS handshake deadlines. Lifecycle cancellation stops outstanding work without recording a provider failure. Local Keychain acquisition has a ten-second bound.
 
 ## Read the data
 
 Authenticated routes are:
 
 - `GET /api/v1/snapshot` returns current and retained accounts, sources, independent windows, ages, freshness, limiting windows, and available pace estimates.
-- `GET /api/v1/snapshot?format=t3-usage` returns only the current native account per provider in the existing allocation input format. Stale or failed sources do not become `ok`. The shared `checkedAt` is the oldest contributing observation.
+- `GET /api/v1/snapshot?format=t3-usage` returns only the current native account per provider in the existing allocation input format. Stale or failed sources do not become `ok`. The shared `checkedAt` is the oldest contributing observation. When no source contributes, it is the oldest available attempt; before any attempt it is the Unix epoch. `checkedAtBasis` distinguishes these cases, and `generatedAt` is the generation time.
 - `GET /api/v1/view?provider=claude&window=weekly&period=24h&lookback=1h&horizon=7d&recurrence=true` returns history and analysis for an explicit selection. Use a window ID from the snapshot to select a model scope or capacity basis. Add `account=<id>` to inspect one retained account.
 - `POST /api/v1/refresh` accepts `{}`, `{"source":"claude-native"}`, or `{"account":"<id>"}`. It returns immediately with queued, pending, and next-allowed states.
 - `POST /api/v1/accounts/<id>/email` reveals only that account's email.
@@ -46,9 +46,11 @@ Authenticated routes are:
 
 Browser mutations require a matching Origin. All routes validate loopback Host and remote address. Data responses use `no-store`. There is no permissive CORS. The proxy's deprecated management routes are not used.
 
-Rates use time-weighted, continuous observation intervals. A reset, adjustment, failed read, inactive binding, or collection gap breaks deltas. Hourly and daily bars include only intervals contained entirely in a bin. Cross-boundary deltas remain explicitly unattributed. Peaks require a fully observed one-hour interval. Completed cycles expose a bound on unused quota from the last pre-reset sample rather than an exact unobserved balance.
+Rates use time-weighted, continuous observation intervals. A reset, adjustment, failed read, inactive binding, or collection gap breaks deltas. Reset timestamp drift up to one minute remains in the same cycle. A current null percentage is an observed unknown balance; it does not discard other current windows. Hourly and daily bars include only intervals contained entirely in a bin. Cross-boundary deltas remain explicitly unattributed, with amounts listed once and per-bin boundary flags. Peaks require a fully observed one-hour interval. Completed cycles expose a bound on unused quota from the last pre-reset sample rather than an exact unobserved balance.
 
 Forecasts need at least three continuous observations. They remain between zero and capacity. A reported reset restores capacity. Later recurrences are labeled inferred and can be disabled. A passed reset without a new observation suspends the forecast. Unreported plan capacity stays separate per account. Provider percentages, session windows, weekly windows, and model scopes are never combined into common capacity.
+
+API history reads are bounded to the selected period, plus the latest sample metadata for retained windows. Startup, refresh and email lookup do not load series. No history is pruned.
 
 Reset credits are unknown. Reset actions are disabled because these native readers expose no eligible redemption operation. The monitor never sends inference, wakes Muse, changes routing, or changes the allocation policy.
 

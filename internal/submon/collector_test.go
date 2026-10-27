@@ -10,7 +10,7 @@ import (
 )
 
 func TestWorkerIsolationCoalescingAndShutdown(t *testing.T) {
-	s, err := openStore(t.TempDir())
+	s, err := openStore(testDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +89,7 @@ func TestStalledHTTPSourceDoesNotBlockPersistenceOrAPI(t *testing.T) {
 		close(working)
 	}))
 	defer server.Close()
-	s, err := openStore(t.TempDir())
+	s, err := openStore(testDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +101,7 @@ func TestStalledHTTPSourceDoesNotBlockPersistenceOrAPI(t *testing.T) {
 	for _, id := range []string{"blocked", "working"} {
 		sourceID := id
 		sources = append(sources, source{ID: sourceID, Provider: codex, Cadence: 5 * time.Minute, Probe: func(c probeContext) probe {
-			_, missing := r.request(c.Context, c.Now(), server.URL+"/"+sourceID, "fixture-secret", nil, false)
+			_, missing := r.request(c.Context, c.Now, server.URL+"/"+sourceID, "fixture-secret", nil, false)
 			if missing != nil {
 				return probe{Outcome: *missing}
 			}
@@ -139,13 +139,13 @@ func TestStalledHTTPSourceDoesNotBlockPersistenceOrAPI(t *testing.T) {
 	}
 }
 func TestCollectorRespectsPersistedReservationAfterRestart(t *testing.T) {
-	dir := t.TempDir()
+	dir := testDir(t)
 	s, err := openStore(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
 	next := testTime().Add(2 * time.Hour)
-	if err = s.reserve("muse-native", next, 4); err != nil {
+	if err = s.reserve("muse-native", next, next, 4); err != nil {
 		t.Fatal(err)
 	}
 	if err = s.close(); err != nil {

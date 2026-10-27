@@ -8,6 +8,15 @@ import (
 	"time"
 )
 
+func testDir(t *testing.T) string {
+	t.Helper()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
 func successfulProbe(at time.Time, subject string) probe {
 	w := testWindow("weekly", 80)
 	r := at.Add(24 * time.Hour)
@@ -15,7 +24,7 @@ func successfulProbe(at time.Time, subject string) probe {
 	return probe{SourceID: "codex-native", StartedAt: at, At: at, Outcome: reading{Identity: identity{Provider: codex, Basis: providerAccount, Subject: subject, Email: "fixture-private@example.test"}, Windows: []windowReading{w}}}
 }
 func TestStoreReopenIdentityBindingsAndIdempotence(t *testing.T) {
-	dir := t.TempDir()
+	dir := testDir(t)
 	s, err := openStore(dir)
 	if err != nil {
 		t.Fatal(err)
@@ -89,7 +98,7 @@ func TestStoreReopenIdentityBindingsAndIdempotence(t *testing.T) {
 	}
 }
 func TestUnverifiedIdentityNeverGetsReadings(t *testing.T) {
-	s, err := openStore(t.TempDir())
+	s, err := openStore(testDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,7 +128,7 @@ func TestUnverifiedIdentityNeverGetsReadings(t *testing.T) {
 }
 
 func TestProbeStoreNeverPersistsCredentialsOrRawPayload(t *testing.T) {
-	dir := t.TempDir()
+	dir := testDir(t)
 	s, err := openStore(dir)
 	if err != nil {
 		t.Fatal(err)
@@ -149,7 +158,7 @@ func TestProbeStoreNeverPersistsCredentialsOrRawPayload(t *testing.T) {
 }
 
 func TestNativeLogoutClosesBindingAndRetainsHistory(t *testing.T) {
-	s, err := openStore(t.TempDir())
+	s, err := openStore(testDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}

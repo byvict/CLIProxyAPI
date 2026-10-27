@@ -16,18 +16,28 @@ type usageProvider struct {
 	SideEffects []string      `json:"sideEffects,omitempty"`
 }
 type usageReport struct {
-	CheckedAt time.Time       `json:"checkedAt"`
-	Timezone  string          `json:"timezone"`
-	Providers []usageProvider `json:"providers"`
+	GeneratedAt    time.Time       `json:"generatedAt"`
+	CheckedAtBasis string          `json:"checkedAtBasis"`
+	CheckedAt      time.Time       `json:"checkedAt"`
+	Timezone       string          `json:"timezone"`
+	Providers      []usageProvider `json:"providers"`
 }
 
 func usageSnapshot(s snapshot, now time.Time) usageReport {
-	out := usageReport{CheckedAt: now.In(saoPaulo), Timezone: "America/Sao_Paulo", Providers: []usageProvider{}}
+	out := usageReport{GeneratedAt: now.In(saoPaulo), CheckedAt: time.Unix(0, 0).In(saoPaulo), CheckedAtBasis: "none", Timezone: "America/Sao_Paulo", Providers: []usageProvider{}}
 	var oldest *time.Time
+	var oldestAttempt *time.Time
 	for _, src := range s.Sources {
-		p := usageProvider{Provider: src.Provider, Status: "unavailable", CheckedAt: now.In(saoPaulo), Windows: []usageWindow{}, Message: src.Message}
+		p := usageProvider{Provider: src.Provider, Status: "unavailable", CheckedAt: time.Unix(0, 0).In(saoPaulo), Windows: []usageWindow{}, Message: src.Message, SideEffects: src.SideEffects}
+		if src.Status == authFailure || src.Status == rateLimited || src.Status == transportFailure || src.Status == invalidResponse {
+			p.Status = "error"
+		}
 		if src.LastAttemptAt != nil {
 			p.CheckedAt = src.LastAttemptAt.In(saoPaulo)
+			if oldestAttempt == nil || p.CheckedAt.Before(*oldestAttempt) {
+				at := p.CheckedAt
+				oldestAttempt = &at
+			}
 		}
 		for _, a := range s.Accounts {
 			if !a.Active || a.ID != src.CurrentAccountID {
@@ -69,6 +79,10 @@ func usageSnapshot(s snapshot, now time.Time) usageReport {
 	}
 	if oldest != nil {
 		out.CheckedAt = *oldest
+		out.CheckedAtBasis = "observation"
+	} else if oldestAttempt != nil {
+		out.CheckedAt = *oldestAttempt
+		out.CheckedAtBasis = "attempt"
 	}
 	return out
 }

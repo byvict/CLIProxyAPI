@@ -15,6 +15,12 @@ func TestNativeReadersHaveNoCredentialWriteOrInferenceCapability(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		var requestBody *ast.BlockStmt
+		for _, decl := range tree.Decls {
+			if fn, valid := decl.(*ast.FuncDecl); valid && file == "sources.go" && fn.Name.Name == "request" {
+				requestBody = fn.Body
+			}
+		}
 		ast.Inspect(tree, func(n ast.Node) bool {
 			call, ok := n.(*ast.CallExpr)
 			if !ok {
@@ -24,8 +30,17 @@ func TestNativeReadersHaveNoCredentialWriteOrInferenceCapability(t *testing.T) {
 			if !ok {
 				return true
 			}
+			if sel.Sel.Name == "Do" && (requestBody == nil || call.Pos() < requestBody.Pos() || call.End() > requestBody.End()) {
+				t.Error("network call bypasses quota request boundary")
+			}
 			pkg, ok := sel.X.(*ast.Ident)
 			if !ok {
+				if sel.Sel.Name == "Do" {
+					x, isClient := sel.X.(*ast.SelectorExpr)
+					if !isClient || x.Sel.Name != "client" || file != "sources.go" {
+						t.Error("network call bypasses quota transport")
+					}
+				}
 				return true
 			}
 			if pkg.Name == "os" {
@@ -44,7 +59,10 @@ func TestNativeReadersHaveNoCredentialWriteOrInferenceCapability(t *testing.T) {
 					t.Error("native credential command is not security")
 				}
 			}
-			if pkg.Name == "r" && sel.Sel.Name == "request" {
+			if pkg.Name == "http" && (sel.Sel.Name == "Get" || sel.Sel.Name == "Post" || sel.Sel.Name == "Do") {
+				t.Error("network call bypasses quota transport")
+			}
+			if sel.Sel.Name == "request" {
 				if len(call.Args) != 6 {
 					t.Error("unrecognized quota call")
 					return true
