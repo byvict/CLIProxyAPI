@@ -263,7 +263,7 @@ func TestBoundedStorePreservesWindowHeadsAndMigrates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(data.Samples) != 3 || len(data.Attempts) != 3 || len(makeSnapshot(data, nil, last).Accounts[0].HistoryWindows) != 2 {
+	if len(data.Samples) != 4 || len(data.Attempts) != 4 || len(makeSnapshot(data, nil, last).Accounts[0].HistoryWindows) != 2 {
 		t.Fatal("bounded read lost metadata or loaded archived series", len(data.Samples), len(data.Attempts))
 	}
 	if _, err = s.db.Exec("DROP TABLE window_heads; DROP INDEX reading_time; DROP INDEX attempt_time; ALTER TABLE source_states DROP COLUMN not_before_ns; ALTER TABLE attempts DROP COLUMN details; PRAGMA user_version=1;"); err != nil {
@@ -278,7 +278,7 @@ func TestBoundedStorePreservesWindowHeadsAndMigrates(t *testing.T) {
 	}
 	defer s.close()
 	data, err = s.loadSince(last.Add(-24 * time.Hour))
-	if err != nil || len(data.Samples) != 3 {
+	if err != nil || len(data.Samples) != 4 {
 		t.Fatal("migration lost history", err)
 	}
 	states, err := s.loadStates()

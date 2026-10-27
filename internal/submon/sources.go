@@ -5,12 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	log "github.com/sirupsen/logrus"
 	"io"
 	"net"
 	"net/http"
 	"strconv"
 	"time"
+
+	log "github.com/sirupsen/logrus"
 )
 
 type quotaReader struct {

@@ -167,7 +167,7 @@ func makeSnapshot(data storedData, states map[string]workerState, now time.Time)
 			}
 		}
 		for _, a := range data.Attempts {
-			if a.SourceID == id {
+			if a.SourceID == id && !a.At.After(now) {
 				at := a.At
 				src.LastAttemptAt = &at
 				src.Status = a.Status
@@ -214,7 +214,7 @@ func makeSnapshot(data storedData, states map[string]workerState, now time.Time)
 		av.HistoryWindows = []historicalWindow{}
 		historical := map[windowKey]windowReading{}
 		for _, s := range data.Samples {
-			if s.AccountID == a.ID {
+			if s.AccountID == a.ID && !s.At.After(now) {
 				historical[s.Window.Key] = s.Window
 			}
 		}
@@ -237,8 +237,13 @@ func makeSnapshot(data storedData, states map[string]workerState, now time.Time)
 			h := historyFor(data, a.ID, key)
 			w := windowView{ID: key.id(), Freshness: "missing"}
 			var latest *sample
+			var lastReported *sample
 			for i := range h {
-				if h[i].Window.Capacity > 0 && !h[i].At.After(now) {
+				if h[i].At.After(now) {
+					continue
+				}
+				lastReported = &h[i]
+				if h[i].Window.Capacity > 0 {
 					latest = &h[i]
 				}
 			}
@@ -252,7 +257,7 @@ func makeSnapshot(data storedData, states map[string]workerState, now time.Time)
 				}
 				w.AgeSeconds = &age
 				w.Freshness = "fresh"
-				if at.After(now) || (w.ResetsAt != nil && !w.ResetsAt.After(now)) || time.Duration(age*float64(time.Second)) > 2*cadence(a.Provider) || av.Status != string(ok) || h[len(h)-1].Window.Capacity == 0 {
+				if (w.ResetsAt != nil && !w.ResetsAt.After(now)) || time.Duration(age*float64(time.Second)) > 2*cadence(a.Provider) || av.Status != string(ok) || lastReported.Window.Capacity == 0 {
 					w.Freshness = "stale"
 				}
 			}
@@ -435,7 +440,7 @@ func makeView(data storedData, states map[string]workerState, now time.Time, sel
 				seen[key] = true
 			}
 			for _, s := range data.Samples {
-				if s.AccountID == a.ID && !seen[s.Window.Key] {
+				if s.AccountID == a.ID && !s.At.After(now) && !seen[s.Window.Key] {
 					keys = append(keys, s.Window.Key)
 					seen[s.Window.Key] = true
 				}

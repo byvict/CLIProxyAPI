@@ -93,9 +93,31 @@ try {
   await wait();
   assert.equal(await page.locator('.forecast-settings[open]').count(), 1);
   assert.equal(await page.locator('#refresh-status').isVisible(), true);
+  checks.push('settings-opened-during-pending-response');
+  await page.locator('.forecast-settings summary').first().click();
+  await page.locator('#refresh-status').waitFor({state: 'hidden'});
+  assert.equal(await page.locator('#refresh-status').isVisible(), false, 'closing settings did not resume the display');
+  checks.push('settings-close-resumes-with-summary-focus');
+  await page.locator('[data-hit]').first().focus();
+  await page.clock.runFor(30001);
+  await wait();
+  await page.locator('#refresh-status').waitFor({state: 'visible'});
+  assert.equal(await page.locator('#refresh-status').isVisible(), true);
   await page.getByRole('button', { name: 'Aplicar dados', exact: true }).click();
   assert.equal(await page.locator('#refresh-status').isVisible(), false);
-  checks.push('settings-opened-during-pending-response');
+  checks.push('manual-apply-preserves-selection');
+
+  const resizedChart = page.locator('[data-hit]').first();
+  await resizedChart.focus();
+  await resizedChart.press('ArrowRight');
+  const inspectedText = await resizedChart.getAttribute('aria-valuetext');
+  await page.setViewportSize({width: 1280, height: 1000});
+  const frames = page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  await page.clock.runFor(50);
+  await frames;
+  assert.equal(await page.evaluate(() => document.activeElement?.matches('[data-hit]')), true, 'responsive redraw lost chart focus');
+  assert.equal(await page.evaluate(() => document.activeElement.getAttribute('aria-valuetext')), inspectedText, 'responsive redraw lost the inspected point');
+  checks.push('responsive-redraw-preserves-inspection');
 
   let oldUnauthorized = true, arrived, release;
   const ready = new Promise(resolve => { arrived = resolve; });

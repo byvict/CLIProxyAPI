@@ -36,7 +36,7 @@ func TestHistoryQueriesSearchArchivedTables(t *testing.T) {
 			t.Log(detail)
 			fields := strings.Fields(detail)
 			if len(fields) > 1 && fields[0] == "SCAN" {
-				for _, table := range []string{"attempts", "readings", "r", "a", "latest"} {
+				for _, table := range []string{"attempts", "readings", "r", "a", "latest", "previous"} {
 					if fields[1] == table {
 						t.Error("archived table scanned", detail)
 					}
@@ -55,11 +55,11 @@ func TestHistoryQueriesSearchArchivedTables(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(bounded.Attempts) != 2 || len(bounded.Samples) != 2 {
+	if len(bounded.Attempts) != 3 || len(bounded.Samples) != 3 {
 		t.Fatal("range/head UNION lost deduplication")
 	}
 	for i, actual := range bounded.Samples {
-		want, _ := json.Marshal(full.Samples[98+i])
+		want, _ := json.Marshal(full.Samples[97+i])
 		got, _ := json.Marshal(actual)
 		if string(want) != string(got) {
 			t.Fatal("bounded row differs from retained row")

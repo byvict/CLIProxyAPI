@@ -210,7 +210,7 @@ func (a *api) snapshot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := a.now()
-	data, err := a.store.loadSince(now.Add(-25 * time.Hour))
+	data, err := a.store.loadSince(now.Add(-24 * time.Hour))
 	if err != nil {
 		apiError(w, 500, "Não foi possível ler o histórico.")
 		return
@@ -244,7 +244,7 @@ func (a *api) view(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := a.now()
-	data, err := a.store.loadSince(now.Add(-period - time.Hour))
+	data, err := a.store.loadSince(now.Add(-period))
 	if err != nil {
 		apiError(w, 500, "Não foi possível ler o histórico.")
 		return

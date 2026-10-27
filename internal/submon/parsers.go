@@ -8,11 +8,13 @@ import (
 	"math"
 	"net/mail"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
 
 var errShape = errors.New("unrecognized native data")
+var errInvalidPercent = errors.New("invalid quota percentage")
 
 type credential struct {
 	Access   string
@@ -158,7 +160,7 @@ func remaining(used *float64) (*float64, error) {
 		return nil, nil
 	}
 	if math.IsNaN(*used) || math.IsInf(*used, 0) || *used < 0 || *used > 100 {
-		return nil, errShape
+		return nil, errInvalidPercent
 	}
 	r := 100 - *used
 	return &r, nil
@@ -251,14 +253,23 @@ func parseWindows(p provider, b []byte) ([]windowReading, error) {
 		if err := addSet(d.Limits, "all", ""); err != nil {
 			return nil, err
 		}
+		unknownScopes := map[string]bool{}
 		unknown := func(scope string) {
+			unknownScopes[scope] = true
+			kept := out[:0]
+			for _, w := range out {
+				if w.Key.Scope != scope || scope == "all" {
+					kept = append(kept, w)
+				}
+			}
+			out = kept
 			key := windowKey{Kind: "unsupported", Scope: scope, Unit: "percent", CapacityBasis: basis}
 			for _, w := range out {
 				if w.Key == key {
 					return
 				}
 			}
-			out = append(out, windowReading{Key: key, Label: "Limite adicional sem formato reconhecido", Capacity: 100})
+			out = append(out, windowReading{Key: key, Label: "Limite adicional desconhecido · " + scope, Capacity: 100})
 		}
 		optional := func(raw json.RawMessage, scope, suffix string) error {
 			if len(raw) == 0 || string(raw) == "null" {
@@ -272,28 +283,62 @@ func parseWindows(p provider, b []byte) ([]windowReading, error) {
 				unknown(scope)
 				return nil
 			}
-			if len(nested.Limits) > 0 {
-				raw = nested.Limits
-			}
-			if string(raw) == "null" {
-				return nil
+			if len(nested.Limits) > 0 && string(nested.Limits) != "null" {
+				var object map[string]json.RawMessage
+				if json.Unmarshal(nested.Limits, &object) != nil {
+					unknown(scope)
+					return nil
+				}
+				if len(object) > 0 {
+					raw = nested.Limits
+				}
 			}
 			if json.Unmarshal(raw, &set) != nil {
 				unknown(scope)
 				return nil
 			}
 			if set.Primary == nil && set.Secondary == nil {
+				var flags struct {
+					Allowed *bool `json:"allowed"`
+					Reached *bool `json:"limit_reached"`
+				}
+				if json.Unmarshal(raw, &flags) != nil || (flags.Allowed != nil && !*flags.Allowed) || (flags.Reached != nil && *flags.Reached) {
+					unknown(scope)
+					return nil
+				}
 				var fields map[string]json.RawMessage
 				_ = json.Unmarshal(raw, &fields)
 				for key := range fields {
-					if key != "primary_window" && key != "secondary_window" && key != "allowed" && key != "limit_reached" && key != "limit_name" && key != "metered_feature" {
+					if key != "primary_window" && key != "secondary_window" && key != "allowed" && key != "limit_reached" && key != "limit_name" && key != "metered_feature" && key != "rate_limit" {
 						unknown(scope)
 						break
 					}
 				}
 				return nil
 			}
-			return addSet(&set, scope, suffix)
+			for _, l := range []*limit{set.Primary, set.Secondary} {
+				if l != nil {
+					if _, err := remaining(l.Used); err != nil {
+						return err
+					}
+				}
+			}
+			if scope == "all" {
+				unknown("additional:all")
+				return nil
+			}
+			if unknownScopes[scope] {
+				return nil
+			}
+			start := len(out)
+			if err := addSet(&set, scope, suffix); err != nil {
+				if errors.Is(err, errInvalidPercent) {
+					return err
+				}
+				out = out[:start]
+				unknown(scope)
+			}
+			return nil
 		}
 		if len(d.Additional) > 0 && string(d.Additional) != "null" {
 			var entries []json.RawMessage
@@ -308,7 +353,8 @@ func parseWindows(p provider, b []byte) ([]windowReading, error) {
 						unknown("additional-unknown")
 						continue
 					}
-					if err := optional(raw, entry.Name, " "+entry.Name); err != nil {
+					name := strings.TrimSpace(entry.Name)
+					if err := optional(raw, name, " "+name); err != nil {
 						return nil, err
 					}
 				}
@@ -461,15 +507,33 @@ func parseCodexDetails(body []byte) accountDetails {
 	for name, data := range raw.Models {
 		value := modelAvailability{Model: name}
 		var parsed struct {
-			Available   *bool      `json:"available"`
-			AvailableAt *time.Time `json:"available_at"`
+			Available   *bool           `json:"available"`
+			AvailableAt json.RawMessage `json:"available_at"`
 		}
 		if json.Unmarshal(data, &parsed) == nil {
 			value.Available = parsed.Available
-			value.AvailableAt = parsed.AvailableAt
+			value.AvailableAt = parseAvailabilityTime(parsed.AvailableAt)
 		}
 		details.Models = append(details.Models, value)
 	}
 	sort.Slice(details.Models, func(i, j int) bool { return details.Models[i].Model < details.Models[j].Model })
 	return details
+}
+
+func parseAvailabilityTime(raw json.RawMessage) *time.Time {
+	text := strings.TrimSpace(string(raw))
+	var decoded string
+	if json.Unmarshal(raw, &decoded) == nil {
+		if parsed, err := time.Parse(time.RFC3339Nano, decoded); err == nil && parsed.Year() >= 1 && parsed.Year() <= 9999 {
+			return &parsed
+		}
+		text = decoded
+	}
+	seconds, err := strconv.ParseFloat(text, 64)
+	if err != nil || math.IsNaN(seconds) || math.IsInf(seconds, 0) || seconds <= 0 || seconds >= float64(time.Date(10000, 1, 1, 0, 0, 0, 0, time.UTC).Unix()) {
+		return nil
+	}
+	whole, fraction := math.Modf(seconds)
+	stamp := time.Unix(int64(whole), int64(fraction*1e9)).UTC()
+	return &stamp
 }

@@ -291,8 +291,12 @@ func historyQueries(from time.Time) (string, string) {
 	attemptsSQL := "SELECT id,source_id,account_id,at_ns,status,code,side_effects,details FROM attempts"
 	if !from.IsZero() {
 		cutoff := from.UnixNano()
+		priorReading := fmt.Sprintf("(SELECT previous.rowid FROM readings previous WHERE previous.account_id=h.account_id AND previous.window_id=h.window_id AND previous.at_ns<%d ORDER BY previous.at_ns DESC,previous.attempt_id DESC LIMIT 1)", cutoff)
+		priorAttempt := fmt.Sprintf("(SELECT previous.id FROM attempts previous WHERE previous.source_id=s.source_id AND previous.at_ns<%d ORDER BY previous.at_ns DESC,previous.id DESC LIMIT 1)", cutoff)
 		readingsSQL += fmt.Sprintf(" WHERE at_ns>=%d UNION SELECT r.account_id,r.attempt_id,r.at_ns,r.reading FROM window_heads h CROSS JOIN readings r ON r.attempt_id=h.attempt_id AND r.window_id=h.window_id", cutoff)
+		readingsSQL += " UNION SELECT r.account_id,r.attempt_id,r.at_ns,r.reading FROM window_heads h CROSS JOIN readings r ON r.rowid=" + priorReading
 		attemptsSQL += fmt.Sprintf(" WHERE at_ns>=%d UNION SELECT a.id,a.source_id,a.account_id,a.at_ns,a.status,a.code,a.side_effects,a.details FROM window_heads h CROSS JOIN attempts a ON a.id=h.attempt_id UNION SELECT a.id,a.source_id,a.account_id,a.at_ns,a.status,a.code,a.side_effects,a.details FROM source_states s CROSS JOIN attempts a ON a.id=(SELECT latest.id FROM attempts latest WHERE latest.source_id=s.source_id ORDER BY latest.at_ns DESC,latest.id DESC LIMIT 1)", cutoff)
+		attemptsSQL += " UNION SELECT a.id,a.source_id,a.account_id,a.at_ns,a.status,a.code,a.side_effects,a.details FROM window_heads h CROSS JOIN readings r ON r.rowid=" + priorReading + " CROSS JOIN attempts a ON a.id=r.attempt_id UNION SELECT a.id,a.source_id,a.account_id,a.at_ns,a.status,a.code,a.side_effects,a.details FROM source_states s CROSS JOIN attempts a ON a.id=" + priorAttempt
 	}
 	readingsSQL += " ORDER BY at_ns,attempt_id"
 	attemptsSQL += " ORDER BY at_ns,id"

@@ -27,7 +27,7 @@
   const name = p => providerNames[p] || p;
   const age = seconds => seconds == null ? 'Sem observação' : seconds < 60 ? 'há menos de 1 min' : seconds < 3600 ? 'há ' + Math.floor(seconds / 60) + ' min' : 'há ' + fmt(seconds / 3600) + ' h';
   const freshness = value => ({fresh: 'Atual', stale: 'Desatualizada', missing: 'Sem leitura'}[value] || value);
-  const statusLabel = a => !a.active ? 'Fora de sessão' : a.freshness !== 'fresh' ? freshness(a.freshness) : ({unavailable: 'Sem cota', limited: 'Limite por modelo', unknown: 'Indisponível', available: 'Disponível'}[a.availability.state]);
+  const statusLabel = a => !a.active ? 'Fora de sessão' : a.freshness !== 'fresh' ? freshness(a.freshness) : ({unavailable: 'Sem cota', limited: 'Modelo indisponível', unknown: 'Indisponível', available: 'Disponível'}[a.availability.state]);
   const reset = value => {
     if (!value) return 'Nenhum reset informado';
     const hours = (new Date(value) - new Date(snapshot.generatedAt)) / 3600000;
@@ -229,6 +229,9 @@
     for (const host of root.querySelectorAll('[data-chart]')) drawChart(host);
   }
   function drawChart(host) {
+    const previousOverlay = host.querySelector('[data-hit]');
+    const restoreFocus = previousOverlay === document.activeElement;
+    const previousIndex = restoreFocus ? Number(previousOverlay.getAttribute('aria-valuenow')) : 0;
     const account = view.groups.flatMap(g => g.accounts).find(a => a.accountId === host.dataset.account && a.windowId === host.dataset.window);
     if (!account) return;
     const kind = host.dataset.chart;
@@ -279,7 +282,7 @@
     const overlay = host.querySelector('[data-hit]');
     const guide = host.querySelector('[data-guide]');
     const inspection = host.nextElementSibling;
-    let index = 0;
+    let index = previousIndex;
     function inspect(at) {
       index = Math.max(0, Math.min(inspectable.length - 1, at));
       const point = inspectable[index];
@@ -316,6 +319,7 @@
       event.preventDefault();
       inspect(event.key === 'Home' ? 0 : event.key === 'End' ? inspectable.length - 1 : index + (event.key === 'ArrowRight' ? 1 : -1));
     });
+    if (restoreFocus) overlay.focus({preventScroll: true});
   }
   function toast(message) {
     const element = document.getElementById('toast');
@@ -336,6 +340,7 @@
   function closeModal() {
     document.getElementById('modal-backdrop').hidden = true;
     if (lastFocus?.isConnected) lastFocus.focus();
+    flushPending();
   }
   root.addEventListener('click', async event => {
     const button = event.target.closest('button');
@@ -393,7 +398,11 @@
   });
   new ResizeObserver(() => { if (snapshot && view) drawCharts(); }).observe(screen);
   root.addEventListener('focusout', () => setTimeout(() => flushPending(), 0));
-  root.addEventListener('toggle', () => flushPending(), true);
+  root.addEventListener('toggle', event => {
+    const details = event.target;
+    const closingFocusedSummary = details.tagName === 'DETAILS' && !details.open && !screen.querySelector('details[open]') && document.getElementById('modal-backdrop').hidden && document.activeElement === details.querySelector('summary');
+    flushPending(closingFocusedSummary);
+  }, true);
   setInterval(() => { if (authenticated !== false) load(true); }, 30000);
   load();
 })();

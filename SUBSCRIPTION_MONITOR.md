@@ -50,9 +50,9 @@ Rates use time-weighted, continuous observation intervals. A reset, adjustment, 
 
 Forecasts need at least three continuous observations. They remain between zero and capacity. A reported reset restores capacity. Later recurrences are labeled inferred and can be disabled. A passed reset without a new observation suspends the forecast. Unreported plan capacity stays separate per account. Provider percentages, session windows, weekly windows, and model scopes are never combined into common capacity.
 
-API history reads are bounded to the selected period, plus one hour of boundary context and the latest sample metadata for retained windows. Indexed range searches and point lookups read this data without scanning archived series. Startup, refresh and email lookup do not load series. No history is pruned.
+API history reads are bounded to the selected period, plus the predecessor reading for each window, the predecessor attempt for each source, and the latest sample metadata for retained windows. Indexed range searches and point lookups read this data without scanning archived series. Startup, refresh and email lookup do not load series. No history is pruned.
 
-Codex reset-credit counts and per-model availability are shown when the provider reports them. Binary model availability stays separate from percentage windows and never creates a consumption rate. Other reset-credit counts remain unknown. Reset actions are disabled because these native readers expose no eligible redemption operation. The monitor never sends inference, wakes Muse, changes routing, or changes the allocation policy.
+Codex reset-credit counts and per-model availability are shown when the provider reports them. Model availability stays separate from percentage windows and never creates a consumption rate or an inferred entitlement cause. Optional return times accept Unix seconds and RFC3339; an unknown time never discards a known availability value. The count is available_count, not a claim of applicable or eligible credits. Other reset-credit counts remain unknown. Reset actions are disabled because these native readers expose no eligible redemption operation. The monitor never sends inference, wakes Muse, changes routing, or changes the allocation policy.
 
 ## Verify the implementation
 
@@ -96,4 +96,4 @@ Check delayed automatic responses and session renewal with the same fixture serv
 node scripts/subscription-monitor-delayed-ui-check.mjs http://127.0.0.1:18318 /absolute/verification-run/fixture/access.key /absolute/verification-run/delayed-ui-evidence
 ```
 
-This checks focus acquired after a refresh starts, continued fetching during interaction, deferred display, and an expired session response that arrives after a new login. Its receipt is `delayed-ui-receipt.json`.
+This checks focus acquired after a refresh starts, continued fetching during interaction, deferred display, settings-close resumption, explicit application of pending data, and an expired session response that arrives after a new login. Its receipt is `delayed-ui-receipt.json`.
