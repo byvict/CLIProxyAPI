@@ -129,6 +129,10 @@ func (c *collector) runWorker(ctx context.Context, w *sourceWorker) error {
 			continue
 		}
 		w.state.InFlightSince = &now
+		select {
+		case <-w.kick:
+		default:
+		}
 		w.state.NextAt = now.Add(w.source.Cadence)
 		w.state.NotBefore = time.Time{}
 		if w.source.Provider == muse {
@@ -141,7 +145,7 @@ func (c *collector) runWorker(ctx context.Context, w *sourceWorker) error {
 			return err
 		}
 		p := w.source.Probe(probeContext{Context: ctx, Now: c.now})
-		if ctx.Err() != nil {
+		if failure, missing := p.Outcome.(missing); ctx.Err() != nil && missing && failure.Code == "cancelled" {
 			return nil
 		}
 		p.SourceID = w.source.ID
@@ -164,7 +168,7 @@ func (c *collector) runWorker(ctx context.Context, w *sourceWorker) error {
 }
 func nextProbe(now time.Time, interval time.Duration, failures int, outcome probeOutcome) (time.Time, int) {
 	if m, failed := outcome.(missing); failed {
-		if m.Code == "credential_missing" || m.Code == "api_key" || m.Code == "unsupported_source" {
+		if m.Code == "credential_missing" || m.Code == "credential_read" || m.Code == "credential_identity" || m.Code == "api_key" || m.Code == "unsupported_source" {
 			return now.Add(interval), 0
 		}
 		failures++

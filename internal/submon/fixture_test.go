@@ -36,11 +36,17 @@ func seedHistory(t *testing.T, s *store) time.Time {
 			weekly := testWindow("weekly", remaining)
 			weekly.Key.CapacityBasis = "fixture-plan"
 			weekly.Label = "semanal"
+			if spec.Provider == codex {
+				weekly.Label = "7d"
+			}
 			nextReset := start.Add(time.Duration(((i+phase)/(7*24*12)+1)*(7*24*12)-phase) * 5 * time.Minute)
 			weekly.ResetsAt = &nextReset
 			session := testWindow("session", 100)
 			session.Key.CapacityBasis = "fixture-plan"
 			session.Label = "sessão"
+			if spec.Provider == codex {
+				session.Label = "5h"
+			}
 			sessionReset := at.Truncate(5 * time.Hour).Add(5 * time.Hour)
 			session.ResetsAt = &sessionReset
 			if spec.Subject == "fixture-claude-a" && i >= 7*24*12-12 {
@@ -65,6 +71,12 @@ func seedHistory(t *testing.T, s *store) time.Time {
 				windows[1].Remaining = number(0)
 			}
 			p := probe{SourceID: spec.Source, StartedAt: at, At: at, Outcome: reading{Identity: identity, Windows: windows}}
+			if spec.Provider == codex {
+				value := p.Outcome.(reading)
+				credits := 2
+				value.Details.ResetCredits = &credits
+				p.Outcome = value
+			}
 			if i > 300 && i < 310 {
 				p.Outcome = missing{Status: transportFailure}
 			}

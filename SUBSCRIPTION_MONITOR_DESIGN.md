@@ -167,7 +167,7 @@ discarded on restart. Data responses and email revelation use `no-store`.
 | Route | Behavior |
 | --- | --- |
 | `POST /session` | Verify the monitor key and establish a browser session. |
-| `GET /api/v1/snapshot` | Current accounts, window readings, freshness, limiting windows, pace when available, and unknown reset-credit capability. No email fields. |
+| `GET /api/v1/snapshot` | Current accounts, window readings, freshness, limiting windows, pace when available, and reported reset-credit counts or unknown capability. No email fields. |
 | `GET /api/v1/snapshot?format=t3-usage` | Current native account per provider in the existing collector contract. Use the oldest contributing observation for shared freshness and preserve provider-level timestamps and error states. |
 | `GET /api/v1/view` | One explicit selection supplies summary, history, rate, bins, heatmap, forecast, assumptions, insufficient-history reason, and coverage. |
 | `POST /api/v1/refresh` | Coalesce collection or return pending/backoff information without waiting on a provider. |
@@ -179,8 +179,11 @@ Keep the approved visual structure, accessible chart inspection, and responsive
 layouts. Real history initially has few observations; do not fill it with demo
 data. Use America/Sao_Paulo consistently.
 
-Native readers do not expose manual reset redemption or credit counts. Display
-unknown capability and disabled reset controls with a reason. Never substitute
+A verified Codex HTTP response exposes reset-credit counts and per-model
+availability. Preserve these as read-only account metadata, separate from
+percentage histories. Display a reported count or unknown capability. Native
+readers do not expose eligible manual redemption, so reset controls remain
+disabled with a reason. Never substitute
 the proxy's local cooldown reset for a provider quota reset.
 
 ## Implementation and verification order

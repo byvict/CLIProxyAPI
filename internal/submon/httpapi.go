@@ -4,9 +4,11 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
+	"database/sql"
 	"embed"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"io/fs"
 	"mime"
@@ -208,7 +210,7 @@ func (a *api) snapshot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := a.now()
-	data, err := a.store.loadSince(now.Add(-24 * time.Hour))
+	data, err := a.store.loadSince(now.Add(-25 * time.Hour))
 	if err != nil {
 		apiError(w, 500, "Não foi possível ler o histórico.")
 		return
@@ -242,7 +244,7 @@ func (a *api) view(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := a.now()
-	data, err := a.store.loadSince(now.Add(-period))
+	data, err := a.store.loadSince(now.Add(-period - time.Hour))
 	if err != nil {
 		apiError(w, 500, "Não foi possível ler o histórico.")
 		return
@@ -297,6 +299,10 @@ func (a *api) email(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	email, err := a.store.emailFor(id)
+	if errors.Is(err, sql.ErrNoRows) {
+		apiError(w, 404, "Conta não encontrada.")
+		return
+	}
 	if err != nil {
 		apiError(w, 500, "Não foi possível ler a conta.")
 		return

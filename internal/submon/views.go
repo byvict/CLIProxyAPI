@@ -28,21 +28,22 @@ type historicalWindow struct {
 	Current bool      `json:"current"`
 }
 type accountView struct {
-	HistoryWindows []historicalWindow `json:"historyWindows"`
-	ID             string             `json:"id"`
-	Provider       provider           `json:"provider"`
-	Identity       identityView       `json:"identity"`
-	Active         bool               `json:"active"`
-	Sources        []string           `json:"sources"`
-	Status         string             `json:"status"`
-	Message        string             `json:"message"`
-	Freshness      string             `json:"freshness"`
-	ObservedAt     *time.Time         `json:"observedAt"`
-	AgeSeconds     *float64           `json:"ageSeconds"`
-	Windows        []windowView       `json:"windows"`
-	Availability   availability       `json:"availability"`
-	ResetCredits   *int               `json:"resetCredits"`
-	ResetAction    struct {
+	HistoryWindows    []historicalWindow  `json:"historyWindows"`
+	ID                string              `json:"id"`
+	Provider          provider            `json:"provider"`
+	Identity          identityView        `json:"identity"`
+	Active            bool                `json:"active"`
+	Sources           []string            `json:"sources"`
+	Status            string              `json:"status"`
+	Message           string              `json:"message"`
+	Freshness         string              `json:"freshness"`
+	ObservedAt        *time.Time          `json:"observedAt"`
+	AgeSeconds        *float64            `json:"ageSeconds"`
+	Windows           []windowView        `json:"windows"`
+	Availability      availability        `json:"availability"`
+	ResetCredits      *int                `json:"resetCredits"`
+	ModelAvailability []modelAvailability `json:"modelAvailability"`
+	ResetAction       struct {
 		Enabled bool   `json:"enabled"`
 		Reason  string `json:"reason"`
 	} `json:"resetAction"`
@@ -129,10 +130,10 @@ func historyFor(data storedData, account string, key windowKey) []sample {
 	sort.Slice(out, func(i, j int) bool { return out[i].At.Before(out[j].At) })
 	return out
 }
-func currentWindows(data storedData, id string) []windowKey {
+func currentWindows(data storedData, id string, now time.Time) []windowKey {
 	lastAttempt := ""
 	for _, a := range data.Attempts {
-		if a.AccountID == id && a.Status == ok {
+		if a.AccountID == id && a.Status == ok && !a.At.After(now) {
 			lastAttempt = a.ID
 		}
 	}
@@ -182,6 +183,16 @@ func makeSnapshot(data storedData, states map[string]workerState, now time.Time)
 	for _, a := range data.Accounts {
 		av := accountView{ID: a.ID, Provider: a.Provider, Identity: identityView{Basis: a.Basis, Label: a.Label, HasEmail: a.Email != ""}, Status: "signed_out", Freshness: "missing", Sources: []string{}, Windows: []windowView{}}
 		av.ResetAction.Reason = "A CLI nativa não informa créditos nem uma ação de reset elegível."
+		av.ModelAvailability = []modelAvailability{}
+		for _, attempt := range data.Attempts {
+			if attempt.AccountID == a.ID && attempt.Status == ok && !attempt.At.After(now) {
+				av.ResetCredits = attempt.Details.ResetCredits
+				av.ModelAvailability = append([]modelAvailability{}, attempt.Details.Models...)
+			}
+		}
+		if av.ResetCredits != nil {
+			av.ResetAction.Reason = "Créditos informados pelo provedor. Resgate indisponível neste monitor."
+		}
 		for _, b := range data.Bindings {
 			if b.AccountID == a.ID && b.To == nil {
 				av.Active = true
@@ -199,7 +210,7 @@ func makeSnapshot(data storedData, states map[string]workerState, now time.Time)
 		} else {
 			av.Message = "Fora de sessão. Histórico preservado."
 		}
-		keys := currentWindows(data, a.ID)
+		keys := currentWindows(data, a.ID, now)
 		av.HistoryWindows = []historicalWindow{}
 		historical := map[windowKey]windowReading{}
 		for _, s := range data.Samples {
@@ -227,7 +238,7 @@ func makeSnapshot(data storedData, states map[string]workerState, now time.Time)
 			w := windowView{ID: key.id(), Freshness: "missing"}
 			var latest *sample
 			for i := range h {
-				if h[i].Window.Capacity > 0 {
+				if h[i].Window.Capacity > 0 && !h[i].At.After(now) {
 					latest = &h[i]
 				}
 			}
@@ -274,6 +285,18 @@ func makeSnapshot(data storedData, states map[string]workerState, now time.Time)
 			ws = append(ws, w.windowReading)
 		}
 		av.Availability = availabilityOf(ws)
+		for _, model := range av.ModelAvailability {
+			if model.Available == nil {
+				if av.Availability.State != "unavailable" {
+					av.Availability.State = "unknown"
+				}
+			} else if !*model.Available {
+				av.Availability.Limiting = append(av.Availability.Limiting, limitingWindow{windowKey: windowKey{Kind: "model-availability", Scope: model.Model, Unit: "availability"}, Label: model.Model, ReturnsAt: model.AvailableAt})
+				if av.Availability.State == "available" {
+					av.Availability.State = "limited"
+				}
+			}
+		}
 		if av.Freshness != "fresh" || !av.Active {
 			av.Availability.State = "unknown"
 		}
@@ -405,7 +428,7 @@ func makeView(data storedData, states map[string]workerState, now time.Time, sel
 		if string(a.Provider) != selection.Provider || (selection.Account != "" && a.ID != selection.Account) || (selection.Account == "" && !a.Active) {
 			continue
 		}
-		keys := currentWindows(data, a.ID)
+		keys := currentWindows(data, a.ID, now)
 		if selection.Account != "" {
 			seen := map[windowKey]bool{}
 			for _, key := range keys {

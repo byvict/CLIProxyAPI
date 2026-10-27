@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	log "github.com/sirupsen/logrus"
 	"io"
 	"net"
@@ -15,6 +16,14 @@ import (
 type quotaReader struct {
 	native nativeAccess
 	client *http.Client
+}
+
+func transportMissing(err error) *missing {
+	value := &missing{Status: transportFailure}
+	if errors.Is(err, context.Canceled) {
+		value.Code = "cancelled"
+	}
+	return value
 }
 
 func quotaClient() *http.Client {
@@ -59,7 +68,7 @@ func (r quotaReader) request(ctx context.Context, now func() time.Time, url, acc
 	}
 	res, err := r.client.Do(req)
 	if err != nil {
-		return nil, &missing{Status: transportFailure}
+		return nil, transportMissing(err)
 	}
 	defer func() {
 		if errClose := res.Body.Close(); errClose != nil {
@@ -78,7 +87,7 @@ func (r quotaReader) request(ctx context.Context, now func() time.Time, url, acc
 	}
 	b, err := io.ReadAll(io.LimitReader(res.Body, 2*1024*1024+1))
 	if err != nil {
-		return nil, &missing{Status: transportFailure}
+		return nil, transportMissing(err)
 	}
 	if len(b) > 2*1024*1024 || !json.Valid(b) {
 		return nil, &missing{Status: invalidResponse}
@@ -93,7 +102,7 @@ func (r quotaReader) probe(c probeContext, p provider) probe {
 		return result
 	}
 	if (p == codex || p == grok) && cred.Identity.Subject == "" {
-		result.Outcome = missing{Status: identityUnverified}
+		result.Outcome = missing{Status: identityUnverified, Code: "credential_identity"}
 		return result
 	}
 	var body []byte
@@ -138,6 +147,10 @@ func (r quotaReader) probe(c probeContext, p provider) probe {
 		result.Outcome = missing{Identity: cred.Identity, Status: invalidResponse}
 		return result
 	}
-	result.Outcome = reading{Identity: cred.Identity, Windows: accountWindowBasis(windows, cred.Identity)}
+	value := reading{Identity: cred.Identity, Windows: accountWindowBasis(windows, cred.Identity)}
+	if p == codex {
+		value.Details = parseCodexDetails(body)
+	}
+	result.Outcome = value
 	return result
 }

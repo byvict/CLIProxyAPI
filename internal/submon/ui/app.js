@@ -12,6 +12,10 @@
   let committedSelection = null;
   let authenticated = null;
   let requestVersion = 0;
+  let sessionGeneration = 0;
+  let pendingUpdate = null;
+  let pendingError = '';
+  let pausedAt = null;
   let lastFocus;
   let toastTimer;
   const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
@@ -29,10 +33,12 @@
     const hours = (new Date(value) - new Date(snapshot.generatedAt)) / 3600000;
     return (hours > 0 ? 'em ' + (hours >= 24 ? Math.floor(hours / 24) + 'd ' : '') + Math.floor(hours % 24) + 'h' : 'data vencida; aguardando leitura') + ' · ' + date(value);
   };
-  async function api(path, options = {}) {
+  async function api(path, options = {}, loadVersion = null) {
+    const generation = sessionGeneration;
     const response = await fetch(path, {credentials: 'same-origin', cache: 'no-store', ...options, headers: {'Content-Type': 'application/json', ...options.headers}});
     const data = await response.json();
-    if (response.status === 401) { authenticated = false; snapshot = null; view = null; committedSelection = null; emails.clear(); login(); throw new Error('Autenticação necessária.'); }
+    if (generation !== sessionGeneration || (loadVersion !== null && loadVersion !== requestVersion)) throw new DOMException('Consulta substituída.', 'AbortError');
+    if (response.status === 401) { sessionGeneration++; authenticated = false; snapshot = null; view = null; committedSelection = null; clearPending(); emails.clear(); login(); throw new Error('Autenticação necessária.'); }
     if (!response.ok) throw new Error(data.message || 'Não foi possível consultar o monitor.');
     return data;
   }
@@ -50,6 +56,7 @@
       const response = await fetch('/session', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({key})});
       if (!response.ok) throw new Error('Chave inválida ou sessão indisponível.');
       authenticated = true;
+      sessionGeneration++;
       await load();
     } catch (error) { const message = document.getElementById('login-error'); if (message) message.textContent = error.message; }
   });
@@ -64,30 +71,60 @@
   function selected() {
     return Object.fromEntries(['provider', 'account', 'window', 'period', 'lookback', 'horizon', 'recurrence'].map(key => [key, state[key]]));
   }
-  async function load() {
+  function interacting() {
+    return screen.contains(document.activeElement) || Boolean(screen.querySelector('details[open]')) || !document.getElementById('modal-backdrop').hidden;
+  }
+  function clearPending() {
+    pendingUpdate = null;
+    pendingError = '';
+    pausedAt = null;
+    document.getElementById('refresh-status').hidden = true;
+  }
+  function applyUpdate(update, error = '') {
+    snapshot = update.snapshot;
+    view = update.view;
+    Object.assign(state, update.selection);
+    committedSelection = update.selection;
+    connectionError = error;
+    clearPending();
+    render();
+  }
+  function deferDisplay(update, error = '') {
+    if (update) pendingUpdate = update;
+    pendingError = error;
+    pausedAt ||= new Date().toISOString();
+    const status = document.getElementById('refresh-status');
+    status.querySelector('span').textContent = `Exibição pausada desde ${date(pausedAt)} para preservar sua interação. ${error || 'Novos dados recebidos em ' + date(update.snapshot.generatedAt) + '.'}`;
+    status.hidden = false;
+  }
+  function flushPending(force = false) {
+    if (!force && interacting()) return;
+    if (pendingUpdate) applyUpdate(pendingUpdate, pendingError);
+    else if (pendingError) { connectionError = pendingError; clearPending(); render(); }
+  }
+  async function load(automatic = false) {
     const version = ++requestVersion;
     const requested = selected();
+    if (!automatic) clearPending();
     root.setAttribute('aria-busy', 'true');
     if (!snapshot || !view || JSON.stringify(requested) !== JSON.stringify(committedSelection)) render();
     try {
-      const nextSnapshot = await api('/api/v1/snapshot');
+      const nextSnapshot = await api('/api/v1/snapshot', {}, version);
       if (version !== requestVersion) return;
       const keys = selectionKeys(nextSnapshot, requested);
       if (requested.provider !== 'all' && !keys.some(w => w.id === requested.window)) {
         requested.window = (keys.find(w => w.key.kind === 'weekly' && w.key.scope === 'all') || keys[0])?.id || 'weekly';
       }
       const params = new URLSearchParams({...requested, recurrence: String(requested.recurrence)});
-      const nextView = await api('/api/v1/view?' + params);
+      const nextView = await api('/api/v1/view?' + params, {}, version);
       if (version !== requestVersion) return;
-      snapshot = nextSnapshot;
-      view = nextView;
-      Object.assign(state, requested);
-      committedSelection = requested;
       authenticated = true;
-      connectionError = "";
-      render();
+      const update = {snapshot: nextSnapshot, view: nextView, selection: requested};
+      if (automatic && snapshot && view && interacting()) deferDisplay(update);
+      else applyUpdate(update);
     } catch (error) {
-      if (version !== requestVersion || authenticated === false) return;
+      if (version !== requestVersion || authenticated === false || error.name === 'AbortError') return;
+      if (automatic && snapshot && view && interacting()) { deferDisplay(null, error.message); return; }
       if (committedSelection) Object.assign(state, committedSelection);
       connectionError = error.message;
       render();
@@ -125,7 +162,7 @@
     const rows = accounts.flatMap(a => {
       const messages = [];
       if (a.freshness !== 'fresh') messages.push(`${freshness(a.freshness)} · última observação ${age(a.ageSeconds)}. ${a.message}`);
-      for (const l of a.availability.limiting) messages.push(`Janela limitante ${l.label} · ${scopeLabel(l.scope)}. Retorno informado ${date(l.returnsAt)}. ${a.freshness !== 'fresh' ? 'Saldo desatualizado.' : ''}`);
+      for (const l of a.availability.limiting) messages.push(`${l.kind === 'model-availability' ? 'Modelo indisponível ' + l.label : 'Janela limitante ' + l.label + ' · ' + scopeLabel(l.scope)}. Retorno informado ${date(l.returnsAt)}. ${a.freshness !== 'fresh' ? 'Leitura desatualizada.' : ''}`);
       const predictions = state.provider === 'all' ? a.windows.map(w => ({label: w.label, exhaustsAt: w.exhaustsAt, freshness: w.freshness, base: '1h'})) : view.groups.flatMap(g => g.accounts.filter(row => row.accountId === a.id).map(row => ({label: g.label, exhaustsAt: row.exhaustsAt, freshness: row.freshness, base: state.lookback})));
       for (const prediction of predictions) if (prediction.exhaustsAt) messages.push(`Estimativa de esgotamento de ${prediction.label} em ${date(prediction.exhaustsAt)}, antes do reset informado. Base ${prediction.base} · leitura ${freshness(prediction.freshness).toLowerCase()}.`);
       return messages.map(message => `<p><strong>${esc(a.identity.label)}</strong><br>${esc(message)}</p>`);
@@ -158,7 +195,7 @@
     return `<div class="section-title"><h2>Cotas por conta</h2><span class="muted small">Janelas independentes</span></div><section class="panel"><div class="ledger-toolbar"><div class="search-wrap"><span class="search-symbol" aria-hidden="true">⌕</span><input id="account-search" aria-label="Buscar conta ou e-mail revelado" placeholder="Buscar conta ou e-mail revelado" value="${esc(state.search)}"></div><div class="actions"><select class="readonly-select" aria-label="Layout" disabled><option>Ledger</option></select><select class="readonly-select" aria-label="Configuração" disabled><option>Default</option></select></div></div><div id="account-rows">${list.length ? snapshot.providers.map(p => {
       const rows = list.filter(a => a.provider === p.provider);
       if (!rows.length) return '';
-      return `<div class="ledger-group"><div class="ledger-group-head"><strong>${esc(name(p.provider))}</strong><span class="muted">${rows.length} contas</span></div>${rows.map(a => `<article class="account-row"><div class="account-identity"><div><h3 class="account-name">${esc(a.identity.label)}</h3><p class="account-meta">${esc(name(a.provider))} · ${a.active ? 'Login atual' : 'Fora de sessão'}<br>Última observação ${age(a.ageSeconds)}<br>${date(a.observedAt)}</p>${a.identity.basis === 'provider_email' ? '<p class="account-meta">Identidade pelo e-mail informado pelo provedor.</p>' : ''}${a.identity.hasEmail ? `<p class="account-meta">${emails.has(a.id) ? esc(emails.get(a.id)) + '<br>' : ''}<button class="text-button" data-email="${a.id}">${emails.has(a.id) ? 'Ocultar e-mail' : 'Revelar este e-mail'}</button></p>` : '<p class="account-meta">E-mail não informado.</p>'}</div><span class="badge ${a.availability.state === 'unavailable' ? 'bad' : a.freshness !== 'fresh' ? 'warn' : 'ok'}">${esc(statusLabel(a))}</span></div>${quotaColumn(a, 'weekly')}${quotaColumn(a, 'session')}${quotaColumn(a, 'model')}<div class="account-actions"><small class="muted">Créditos de reset desconhecidos</small><button class="btn btn-small" disabled title="${esc(a.resetAction.reason)}">Reset indisponível</button><span class="account-meta">${esc(a.resetAction.reason)}</span><button class="btn btn-small" data-refresh-account="${a.id}" ${a.active ? '' : 'disabled'}>Atualizar cota</button><button class="text-button" data-analyze="${a.id}">Analisar conta</button></div></article>`).join('')}</div>`;
+      return `<div class="ledger-group"><div class="ledger-group-head"><strong>${esc(name(p.provider))}</strong><span class="muted">${rows.length} contas</span></div>${rows.map(a => `<article class="account-row"><div class="account-identity"><div><h3 class="account-name">${esc(a.identity.label)}</h3><p class="account-meta">${esc(name(a.provider))} · ${a.active ? 'Login atual' : 'Fora de sessão'}<br>Última observação ${age(a.ageSeconds)}<br>${date(a.observedAt)}</p>${a.identity.basis === 'provider_email' ? '<p class="account-meta">Identidade pelo e-mail informado pelo provedor.</p>' : ''}${a.identity.hasEmail ? `<p class="account-meta">${emails.has(a.id) ? esc(emails.get(a.id)) + '<br>' : ''}<button class="text-button" data-email="${a.id}">${emails.has(a.id) ? 'Ocultar e-mail' : 'Revelar este e-mail'}</button></p>` : '<p class="account-meta">E-mail não informado.</p>'}</div><span class="badge ${a.availability.state === 'unavailable' ? 'bad' : a.freshness !== 'fresh' ? 'warn' : 'ok'}">${esc(statusLabel(a))}</span></div>${quotaColumn(a, 'weekly')}${quotaColumn(a, 'session')}${quotaColumn(a, 'model')}<div class="account-actions"><small class="muted">${a.resetCredits == null ? 'Créditos de reset desconhecidos' : 'Créditos de reset disponíveis ' + fmt(a.resetCredits, 0)}</small><button class="btn btn-small" disabled title="${esc(a.resetAction.reason)}">Reset indisponível</button><span class="account-meta">${esc(a.resetAction.reason)}</span><button class="btn btn-small" data-refresh-account="${a.id}" ${a.active ? '' : 'disabled'}>Atualizar cota</button><button class="text-button" data-analyze="${a.id}">Analisar conta</button></div></article>`).join('')}</div>`;
     }).join('') : '<p class="empty muted">Nenhuma conta identificada nesta seleção. Fontes sem identidade permanecem no estado informado acima.</p>'}</div></section>`;
   }
   function historyScreen() {
@@ -304,6 +341,7 @@
     const button = event.target.closest('button');
     if (!button || button.disabled) return;
     const d = button.dataset;
+    if (d.action === 'apply-pending') { flushPending(true); return; }
     if (d.action === 'retry') { await load(); return; }
     if (d.action === 'close-modal') { closeModal(); return; }
     if (!snapshot) return;
@@ -328,7 +366,7 @@
       }
       if (d.action === 'collapse') { state.collapsed = !state.collapsed; render(); return; }
       if (d.action === 'snapshot') { modal('Dados para a escalação', JSON.stringify(await api('/api/v1/snapshot?format=t3-usage'), null, 2)); }
-    } catch (error) { toast(error.message); }
+    } catch (error) { if (error.name !== 'AbortError') toast(error.message); }
   });
   root.addEventListener('change', async event => {
     const input = event.target;
@@ -354,6 +392,8 @@
     else if (!event.shiftKey && (document.activeElement === last || document.activeElement.classList.contains('modal'))) { event.preventDefault(); first.focus(); }
   });
   new ResizeObserver(() => { if (snapshot && view) drawCharts(); }).observe(screen);
-  setInterval(() => { if (authenticated !== false && !screen.contains(document.activeElement) && !screen.querySelector('details[open]') && document.getElementById('modal-backdrop').hidden) load(); }, 30000);
+  root.addEventListener('focusout', () => setTimeout(() => flushPending(), 0));
+  root.addEventListener('toggle', () => flushPending(), true);
+  setInterval(() => { if (authenticated !== false) load(true); }, 30000);
   load();
 })();

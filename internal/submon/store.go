@@ -36,6 +36,7 @@ type storedAttempt struct {
 	Status                  status
 	Code                    string
 	SideEffects             []string
+	Details                 accountDetails
 }
 type storedSample struct {
 	AccountID, AttemptID string
@@ -110,10 +111,10 @@ func (s *store) migrate() error {
 	if err := s.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	if version > 2 {
+	if version > 3 {
 		return errors.New("monitor database schema is newer than this binary")
 	}
-	if version == 2 {
+	if version == 3 {
 		return nil
 	}
 	tx, err := s.db.Begin()
@@ -136,7 +137,8 @@ func (s *store) migrate() error {
 			return fmt.Errorf("migrate monitor database: %w", err)
 		}
 	}
-	_, err = tx.Exec(`
+	if version < 2 {
+		_, err = tx.Exec(`
  ALTER TABLE source_states ADD COLUMN not_before_ns INTEGER NOT NULL DEFAULT 0;
  UPDATE source_states SET not_before_ns=next_ns;
  CREATE TABLE window_heads(account_id TEXT NOT NULL,window_id TEXT NOT NULL,attempt_id TEXT NOT NULL REFERENCES attempts(id),PRIMARY KEY(account_id,window_id));
@@ -144,7 +146,11 @@ func (s *store) migrate() error {
  CREATE INDEX reading_time ON readings(at_ns);
  CREATE INDEX attempt_time ON attempts(at_ns);
  PRAGMA user_version=2;`)
-	if err != nil {
+		if err != nil {
+			return fmt.Errorf("migrate monitor database: %w", err)
+		}
+	}
+	if _, err = tx.Exec(`ALTER TABLE attempts ADD COLUMN details TEXT NOT NULL DEFAULT '{}'; PRAGMA user_version=3;`); err != nil {
 		return fmt.Errorf("migrate monitor database: %w", err)
 	}
 	return tx.Commit()
@@ -177,9 +183,11 @@ func (s *store) append(p probe, next time.Time, failures int) error {
 	st, code := ok, ""
 	effects, _ := json.Marshal(p.SideEffects)
 	var i identity
+	var details accountDetails
 	switch result := p.Outcome.(type) {
 	case reading:
 		i = result.Identity
+		details = result.Details
 	case missing:
 		i = result.Identity
 		st, code = result.Status, result.Code
@@ -203,7 +211,8 @@ func (s *store) append(p probe, next time.Time, failures int) error {
 			return err
 		}
 	}
-	if _, err = tx.Exec("INSERT INTO attempts VALUES(?,?,?,?,?,?,?)", id, p.SourceID, accountID, p.At.UnixNano(), st, code, string(effects)); err != nil {
+	detailJSON, _ := json.Marshal(details)
+	if _, err = tx.Exec("INSERT INTO attempts VALUES(?,?,?,?,?,?,?,?)", id, p.SourceID, accountID, p.At.UnixNano(), st, code, string(effects), string(detailJSON)); err != nil {
 		return err
 	}
 	if result, valid := p.Outcome.(reading); valid {
@@ -255,9 +264,6 @@ func (s *store) loadStates() (map[string]sourceState, error) {
 func (s *store) emailFor(id string) (string, error) {
 	var email string
 	err := s.db.QueryRow("SELECT email FROM accounts WHERE id=?", id).Scan(&email)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", nil
-	}
 	return email, err
 }
 
@@ -280,17 +286,22 @@ func (s *store) currentSources(id string) ([]string, error) {
 
 func (s *store) load() (storedData, error) { return s.loadSince(time.Time{}) }
 
-func (s *store) loadSince(from time.Time) (storedData, error) {
-	data := storedData{Accounts: []storedAccount{}, Bindings: []binding{}, Attempts: []storedAttempt{}, Samples: []storedSample{}, Sources: map[string]sourceState{}}
+func historyQueries(from time.Time) (string, string) {
 	readingsSQL := "SELECT account_id,attempt_id,at_ns,reading FROM readings"
-	attemptsSQL := "SELECT id,source_id,account_id,at_ns,status,code,side_effects FROM attempts"
+	attemptsSQL := "SELECT id,source_id,account_id,at_ns,status,code,side_effects,details FROM attempts"
 	if !from.IsZero() {
 		cutoff := from.UnixNano()
-		readingsSQL += fmt.Sprintf(" WHERE at_ns>=%d UNION SELECT r.account_id,r.attempt_id,r.at_ns,r.reading FROM readings r JOIN window_heads h ON h.account_id=r.account_id AND h.window_id=r.window_id AND h.attempt_id=r.attempt_id", cutoff)
-		attemptsSQL += fmt.Sprintf(" WHERE at_ns>=%d OR id IN (SELECT attempt_id FROM window_heads) OR id IN (SELECT (SELECT a.id FROM attempts a WHERE a.source_id=s.source_id ORDER BY a.at_ns DESC,a.id DESC LIMIT 1) FROM source_states s)", cutoff)
+		readingsSQL += fmt.Sprintf(" WHERE at_ns>=%d UNION SELECT r.account_id,r.attempt_id,r.at_ns,r.reading FROM window_heads h CROSS JOIN readings r ON r.attempt_id=h.attempt_id AND r.window_id=h.window_id", cutoff)
+		attemptsSQL += fmt.Sprintf(" WHERE at_ns>=%d UNION SELECT a.id,a.source_id,a.account_id,a.at_ns,a.status,a.code,a.side_effects,a.details FROM window_heads h CROSS JOIN attempts a ON a.id=h.attempt_id UNION SELECT a.id,a.source_id,a.account_id,a.at_ns,a.status,a.code,a.side_effects,a.details FROM source_states s CROSS JOIN attempts a ON a.id=(SELECT latest.id FROM attempts latest WHERE latest.source_id=s.source_id ORDER BY latest.at_ns DESC,latest.id DESC LIMIT 1)", cutoff)
 	}
 	readingsSQL += " ORDER BY at_ns,attempt_id"
 	attemptsSQL += " ORDER BY at_ns,id"
+	return readingsSQL, attemptsSQL
+}
+
+func (s *store) loadSince(from time.Time) (storedData, error) {
+	data := storedData{Accounts: []storedAccount{}, Bindings: []binding{}, Attempts: []storedAttempt{}, Samples: []storedSample{}, Sources: map[string]sourceState{}}
+	readingsSQL, attemptsSQL := historyQueries(from)
 	tx, err := s.db.BeginTx(context.Background(), &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return data, err
@@ -327,11 +338,15 @@ func (s *store) loadSince(from time.Time) (storedData, error) {
 			var a storedAttempt
 			var ns int64
 			var effects string
-			if err := r.Scan(&a.ID, &a.SourceID, &a.AccountID, &ns, &a.Status, &a.Code, &effects); err != nil {
+			var details string
+			if err := r.Scan(&a.ID, &a.SourceID, &a.AccountID, &ns, &a.Status, &a.Code, &effects, &details); err != nil {
 				return err
 			}
 			a.At = time.Unix(0, ns)
 			if err := json.Unmarshal([]byte(effects), &a.SideEffects); err != nil {
+				return err
+			}
+			if err := json.Unmarshal([]byte(details), &a.Details); err != nil {
 				return err
 			}
 			data.Attempts = append(data.Attempts, a)

@@ -54,7 +54,7 @@ func usageSnapshot(s snapshot, now time.Time) usageReport {
 			} else {
 				p.Status = "unavailable"
 			}
-			if a.Freshness != "fresh" && p.Status != "error" {
+			if a.Freshness != "fresh" && src.Status == ok {
 				p.Message = "Leitura ausente ou desatualizada. Consulte o snapshot completo para idade e estado."
 			}
 			for _, w := range a.Windows {

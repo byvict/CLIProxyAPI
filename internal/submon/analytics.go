@@ -135,7 +135,9 @@ func analyze(input []sample, o analysisOptions) analysis {
 		}
 		if !s.At.Before(start) {
 			if i > 0 && s.At.Sub(samples[i-1].At) > maxGap {
-				a.Observed = append(a.Observed, chartPoint{At: samples[i-1].At.Add(maxGap)})
+				if gap := samples[i-1].At.Add(maxGap); !gap.Before(start) {
+					a.Observed = append(a.Observed, chartPoint{At: gap})
+				}
 			}
 			a.Observed = append(a.Observed, chartPoint{At: s.At, Remaining: s.Window.Remaining})
 		}

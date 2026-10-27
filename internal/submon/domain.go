@@ -76,6 +76,18 @@ type probeOutcome interface{ probeOutcome() }
 type reading struct {
 	Identity identity
 	Windows  []windowReading
+	Details  accountDetails
+}
+
+type modelAvailability struct {
+	Model       string     `json:"model"`
+	Available   *bool      `json:"available"`
+	AvailableAt *time.Time `json:"availableAt"`
+}
+
+type accountDetails struct {
+	ResetCredits *int                `json:"resetCredits,omitempty"`
+	Models       []modelAvailability `json:"models,omitempty"`
 }
 
 func (reading) probeOutcome() {}

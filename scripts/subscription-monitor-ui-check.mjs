@@ -51,6 +51,7 @@ try {
   await page.getByRole('heading', { name: 'Monitor de assinaturas', exact: true }).waitFor();
   await page.locator('#cp-monitor[aria-busy="false"]').waitFor();
   await page.locator('.provider-card').first().waitFor();
+  assert.match(await page.locator('#account-rows').innerText(), /Créditos de reset disponíveis 2/);
   assert.equal(await page.locator('[data-chart]').count(), 0, 'All silently selected one provider chart');
   await capture('desktop-overview-all');
   await page.locator('.provider-tabs [data-filter="claude"]').click();

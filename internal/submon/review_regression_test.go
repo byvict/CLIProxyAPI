@@ -189,7 +189,7 @@ func TestManualRefreshSkipsScheduleButRespectsConstraints(t *testing.T) {
 			src := source{ID: string(provider) + "-native", Provider: provider, Cadence: cadence(provider), Probe: func(c probeContext) probe {
 				close(entered)
 				<-c.Context.Done()
-				return probe{Outcome: missing{Status: transportFailure}}
+				return probe{Outcome: missing{Status: transportFailure, Code: "cancelled"}}
 			}}
 			c := newCollector(s, []source{src}, testTime)
 			worker := c.workers[src.ID]
@@ -266,7 +266,7 @@ func TestBoundedStorePreservesWindowHeadsAndMigrates(t *testing.T) {
 	if len(data.Samples) != 3 || len(data.Attempts) != 3 || len(makeSnapshot(data, nil, last).Accounts[0].HistoryWindows) != 2 {
 		t.Fatal("bounded read lost metadata or loaded archived series", len(data.Samples), len(data.Attempts))
 	}
-	if _, err = s.db.Exec("DROP TABLE window_heads; DROP INDEX reading_time; DROP INDEX attempt_time; ALTER TABLE source_states DROP COLUMN not_before_ns; PRAGMA user_version=1;"); err != nil {
+	if _, err = s.db.Exec("DROP TABLE window_heads; DROP INDEX reading_time; DROP INDEX attempt_time; ALTER TABLE source_states DROP COLUMN not_before_ns; ALTER TABLE attempts DROP COLUMN details; PRAGMA user_version=1;"); err != nil {
 		t.Fatal(err)
 	}
 	if err = s.close(); err != nil {

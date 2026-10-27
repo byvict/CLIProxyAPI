@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"net/mail"
+	"sort"
 	"strings"
 	"time"
 )
@@ -214,13 +215,11 @@ func parseWindows(p provider, b []byte) ([]windowReading, error) {
 			Secondary *limit `json:"secondary_window"`
 		}
 		var d struct {
-			Plan       string    `json:"plan_type"`
-			Limits     *limitSet `json:"rate_limit"`
-			Additional []struct {
-				Name   string    `json:"limit_name"`
-				Limits *limitSet `json:"rate_limit"`
-			} `json:"additional_rate_limits"`
-			CodeReview *limitSet `json:"code_review_rate_limits"`
+			Plan                string          `json:"plan_type"`
+			Limits              *limitSet       `json:"rate_limit"`
+			Additional          json.RawMessage `json:"additional_rate_limits"`
+			CodeReview          json.RawMessage `json:"code_review_rate_limit"`
+			AlternateCodeReview json.RawMessage `json:"code_review_rate_limits"`
 		}
 		if json.Unmarshal(b, &d) != nil || d.Limits == nil {
 			return nil, errShape
@@ -230,9 +229,6 @@ func parseWindows(p provider, b []byte) ([]windowReading, error) {
 			basis = "unknown-plan"
 		}
 		addSet := func(set *limitSet, scope, suffix string) error {
-			if set == nil || (set.Primary == nil && set.Secondary == nil) {
-				return errShape
-			}
 			for _, l := range []*limit{set.Primary, set.Secondary} {
 				if l == nil {
 					continue
@@ -249,22 +245,81 @@ func parseWindows(p provider, b []byte) ([]windowReading, error) {
 			}
 			return nil
 		}
+		if d.Limits.Primary == nil && d.Limits.Secondary == nil {
+			return nil, errShape
+		}
 		if err := addSet(d.Limits, "all", ""); err != nil {
 			return nil, err
 		}
-		for _, additional := range d.Additional {
-			name := strings.TrimSpace(additional.Name)
-			if name == "" {
-				return nil, errShape
+		unknown := func(scope string) {
+			key := windowKey{Kind: "unsupported", Scope: scope, Unit: "percent", CapacityBasis: basis}
+			for _, w := range out {
+				if w.Key == key {
+					return
+				}
 			}
-			if err := addSet(additional.Limits, name, " "+name); err != nil {
-				return nil, err
+			out = append(out, windowReading{Key: key, Label: "Limite adicional sem formato reconhecido", Capacity: 100})
+		}
+		optional := func(raw json.RawMessage, scope, suffix string) error {
+			if len(raw) == 0 || string(raw) == "null" {
+				return nil
+			}
+			var set limitSet
+			var nested struct {
+				Limits json.RawMessage `json:"rate_limit"`
+			}
+			if json.Unmarshal(raw, &nested) != nil {
+				unknown(scope)
+				return nil
+			}
+			if len(nested.Limits) > 0 {
+				raw = nested.Limits
+			}
+			if string(raw) == "null" {
+				return nil
+			}
+			if json.Unmarshal(raw, &set) != nil {
+				unknown(scope)
+				return nil
+			}
+			if set.Primary == nil && set.Secondary == nil {
+				var fields map[string]json.RawMessage
+				_ = json.Unmarshal(raw, &fields)
+				for key := range fields {
+					if key != "primary_window" && key != "secondary_window" && key != "allowed" && key != "limit_reached" && key != "limit_name" && key != "metered_feature" {
+						unknown(scope)
+						break
+					}
+				}
+				return nil
+			}
+			return addSet(&set, scope, suffix)
+		}
+		if len(d.Additional) > 0 && string(d.Additional) != "null" {
+			var entries []json.RawMessage
+			if json.Unmarshal(d.Additional, &entries) != nil {
+				unknown("additional-unknown")
+			} else {
+				for _, raw := range entries {
+					var entry struct {
+						Name string `json:"limit_name"`
+					}
+					if json.Unmarshal(raw, &entry) != nil || strings.TrimSpace(entry.Name) == "" {
+						unknown("additional-unknown")
+						continue
+					}
+					if err := optional(raw, entry.Name, " "+entry.Name); err != nil {
+						return nil, err
+					}
+				}
 			}
 		}
-		if d.CodeReview != nil {
-			if err := addSet(d.CodeReview, "code-review", " code review"); err != nil {
-				return nil, err
-			}
+		codeReview := d.CodeReview
+		if len(codeReview) == 0 || string(codeReview) == "null" {
+			codeReview = d.AlternateCodeReview
+		}
+		if err := optional(codeReview, "code-review", " code review"); err != nil {
+			return nil, err
 		}
 	case claude:
 		var d struct {
@@ -386,4 +441,35 @@ func accountWindowBasis(windows []windowReading, i identity) []windowReading {
 		}
 	}
 	return windows
+}
+
+func parseCodexDetails(body []byte) accountDetails {
+	var raw struct {
+		Credits struct {
+			Available json.RawMessage `json:"available_count"`
+		} `json:"rate_limit_reset_credits"`
+		Models map[string]json.RawMessage `json:"model_usage"`
+	}
+	if json.Unmarshal(body, &raw) != nil {
+		return accountDetails{}
+	}
+	details := accountDetails{}
+	var credits *int
+	if json.Unmarshal(raw.Credits.Available, &credits) == nil && credits != nil && *credits >= 0 {
+		details.ResetCredits = credits
+	}
+	for name, data := range raw.Models {
+		value := modelAvailability{Model: name}
+		var parsed struct {
+			Available   *bool      `json:"available"`
+			AvailableAt *time.Time `json:"available_at"`
+		}
+		if json.Unmarshal(data, &parsed) == nil {
+			value.Available = parsed.Available
+			value.AvailableAt = parsed.AvailableAt
+		}
+		details.Models = append(details.Models, value)
+	}
+	sort.Slice(details.Models, func(i, j int) bool { return details.Models[i].Model < details.Models[j].Model })
+	return details
 }

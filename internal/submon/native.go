@@ -51,6 +51,9 @@ func readKeychain(ctx context.Context, service, account string) ([]byte, error) 
 	cmd := exec.CommandContext(ctx, "/usr/bin/security", args...)
 	data, err := cmd.Output()
 	if err != nil {
+		if errors.Is(ctx.Err(), context.Canceled) {
+			return nil, context.Canceled
+		}
 		var exit *exec.ExitError
 		if errors.As(err, &exit) && exit.ExitCode() == 44 {
 			return nil, errCredentialMissing
@@ -137,6 +140,9 @@ func (n nativeAccess) acquire(ctx context.Context, p provider) (credential, erro
 		}
 	}
 	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			return credential{}, context.Canceled
+		}
 		if errors.Is(err, os.ErrNotExist) || errors.Is(err, errCredentialMissing) {
 			return credential{}, errCredentialMissing
 		}
@@ -145,6 +151,9 @@ func (n nativeAccess) acquire(ctx context.Context, p provider) (credential, erro
 	return parseCredential(p, b)
 }
 func acquisitionFailure(err error) missing {
+	if errors.Is(err, context.Canceled) {
+		return missing{Status: transportFailure, Code: "cancelled"}
+	}
 	if errors.Is(err, errCredentialMissing) {
 		return missing{Status: unavailable, Code: "credential_missing"}
 	}

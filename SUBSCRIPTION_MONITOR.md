@@ -14,7 +14,7 @@ Start it with a dedicated, absolute data directory:
 
 Open `http://127.0.0.1:8318`. Enter the key from `access.key` in that data directory. The key file is private. The browser keeps an opaque HttpOnly, SameSite=Strict session for up to 12 hours. Restarting the process discards sessions. Tools can send the key in an `Authorization: Bearer` header. Keep it out of command arguments and shell history.
 
-The process collects with the panel closed. Stop it with SIGINT or SIGTERM. One process owns each data directory. SQLite uses WAL, schema migrations, idempotent attempts, account bindings, and independent window histories. A source that stops responding stays pending until lifecycle cancellation. Other sources and the panel remain available.
+The process collects with the panel closed. The browser keeps fetching while you inspect a chart or keep settings open. It preserves those controls and shows a paused-display notice until you leave the interaction or apply the pending data. Stop it with SIGINT or SIGTERM. One process owns each data directory. SQLite uses WAL, schema migrations, idempotent attempts, account bindings, and independent window histories. A source that stops responding stays pending until lifecycle cancellation. Other sources and the panel remain available.
 
 ## Native credential sources
 
@@ -50,9 +50,9 @@ Rates use time-weighted, continuous observation intervals. A reset, adjustment, 
 
 Forecasts need at least three continuous observations. They remain between zero and capacity. A reported reset restores capacity. Later recurrences are labeled inferred and can be disabled. A passed reset without a new observation suspends the forecast. Unreported plan capacity stays separate per account. Provider percentages, session windows, weekly windows, and model scopes are never combined into common capacity.
 
-API history reads are bounded to the selected period, plus the latest sample metadata for retained windows. Startup, refresh and email lookup do not load series. No history is pruned.
+API history reads are bounded to the selected period, plus one hour of boundary context and the latest sample metadata for retained windows. Indexed range searches and point lookups read this data without scanning archived series. Startup, refresh and email lookup do not load series. No history is pruned.
 
-Reset credits are unknown. Reset actions are disabled because these native readers expose no eligible redemption operation. The monitor never sends inference, wakes Muse, changes routing, or changes the allocation policy.
+Codex reset-credit counts and per-model availability are shown when the provider reports them. Binary model availability stays separate from percentage windows and never creates a consumption rate. Other reset-credit counts remain unknown. Reset actions are disabled because these native readers expose no eligible redemption operation. The monitor never sends inference, wakes Muse, changes routing, or changes the allocation policy.
 
 ## Verify the implementation
 
@@ -89,3 +89,11 @@ node scripts/subscription-monitor-ui-check.mjs http://127.0.0.1:18318 /absolute/
 Set `SUBMON_PLAYWRIGHT_MODULE` to an absolute Playwright module path when it is outside normal Node resolution. The script checks keyboard chart inspection, account email guards, chart collapse, JavaScript errors, and page overflow. It records screenshots and `ui-receipt.json`.
 
 Validate an exported fixture or live `t3-usage` snapshot with the allocation consumer only through `escalar.py --catalog <existing-catalog> --usage <snapshot> --dry-run`. This does not call its normal quota collector or rewrite the model sheet. Eligibility failures are distinct from malformed input.
+
+Check delayed automatic responses and session renewal with the same fixture server:
+
+```sh
+node scripts/subscription-monitor-delayed-ui-check.mjs http://127.0.0.1:18318 /absolute/verification-run/fixture/access.key /absolute/verification-run/delayed-ui-evidence
+```
+
+This checks focus acquired after a refresh starts, continued fetching during interaction, deferred display, and an expired session response that arrives after a new login. Its receipt is `delayed-ui-receipt.json`.
