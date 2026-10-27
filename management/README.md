@@ -30,7 +30,8 @@ Observations are stored in
 `quota-history.sqlite` beside the proxy configuration. No credentials or tokens
 are stored in this database. Existing v1 monitor data is left intact.
 `scripts/import-quota-history-v1.py --help` describes the optional import of v1
-history. It matches verified identities, keeps different capacity bases separate,
+history. It links only verified identities, keeps unmatched accounts as separate
+inactive historical accounts, keeps different capacity bases separate,
 preserves failure barriers, and backs up the destination before writing. Use
 `--dry-run` to inspect matched providers without changing either database.
 
@@ -112,6 +113,45 @@ These endpoints do not return the token. The form clears the token after a succe
 save and does not store it in browser storage. Private contribution visibility follows
 the token's permissions. GitHub activity belongs to the entire account and is not
 assigned to AI providers.
+
+### Recover local history
+
+Run `python3 scripts/import-performance-history.py --destination /absolute/config-directory/performance-history.sqlite --receipt /absolute/evidence/import.json`.
+Use `--dry-run` to preview the import in memory. The importer reads T3 v1 and v2
+projections, userdata backups, usage caches v4 through v9, native CLI logs, and
+archived Codex transcripts, including `.jsonl.zst` files. It requires Python 3.9+
+and `zstd` for compressed transcripts. Source stores remain read-only. The archive
+contains timestamps, identifiers, counts, and source paths. It contains no prompts
+or credentials. Existing archives receive a SQLite backup before each import.
+Unchanged transcripts are skipped on subsequent runs.
+
+Performance combines this archive with current T3 projections. Execution IDs remove
+snapshot duplicates. Native turns that overlap a T3 turn in the same provider and
+native session count once. Request IDs remove repeated Claude content blocks, Grok
+model breakdowns, and Muse event copies. Codex events use session, timestamp, and
+usage counters. Input cache categories in the T3 scan cache are disjoint. Reasoning
+is already part of output. Native token events replace the overlapping part of a
+T3 token report. A larger T3 report contributes only its remaining recorded tokens.
+Native timestamps preserve token activity across midnight in São Paulo.
+
+Cached calls without preserved execution boundaries contribute tokens and calendar
+activity, but do not create agents or durations. Native-only token coverage is
+marked partial. Legacy T3 turns without a recoverable native identity are excluded
+from the execution count to avoid counting the same CLI execution again. The import
+receipt reports these exclusions. Run the importer again to refresh direct CLI
+history; current T3 activity continues to update without another import.
+
+Run `python3 scripts/import-codexbar-history.py --help` to recover CodexBar quota
+history. This import uses recorded capture times and percentages. It links a Codex
+account to a proxy credential only when the provider account ID matches exactly.
+Unknown accounts remain separate inactive historical accounts. It backs up the
+quota database and ignores duplicate observations. It does not infer balances from
+tokens. In Quota History, select **Todo o histórico** to inspect older readings.
+Select a historical account explicitly to inspect an account outside the current
+login set. Gaps retain the existing coverage rules.
+
+Verify the importers with `python3 -m unittest discover -s scripts -p 'test_import_performance_history.py'`.
+Verify the readers and endpoints with `go test ./internal/performance ./internal/quotahistory ./internal/api/handlers/management`.
 
 The existing management key protects all three endpoints. Home mode disables these
 local management routes under the same policy as the rest of the v8 API.

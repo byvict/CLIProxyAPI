@@ -71,6 +71,19 @@ describe('Performance activity', () => {
     expect(grok.total.reportedAgents).toBe(0);
     expect(grok.total.tokens).toBe(0);
   });
+  test('recovered token calls light the calendar and streak without inventing executions', () => {
+    const recovered: Activity = {
+      ...activity,
+      historyImported: true,
+      providers: [{ id: 'grok', days: [{ ...emptyDay(activity.today), tokens: 123, tokenRecords: 2 }] }],
+    };
+    expect(parsePerformance({ status: 'ready', activity: recovered })).toEqual({ status: 'ready', activity: recovered });
+    const selected = selectActivity(recovered, 'all');
+    expect(selected.total.tokens).toBe(123);
+    expect(selected.total.tokenRecords).toBe(2);
+    expect(selected.total.agents).toBe(0);
+    expect(selected.currentStreak).toBe(1);
+  });
   test('calendar covers complete leap years and weeks', () => {
     const days = calendarDays(2024);
     expect(days.filter(Boolean)).toHaveLength(366);

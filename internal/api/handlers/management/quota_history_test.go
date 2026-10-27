@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"testing"
 	"time"
@@ -69,6 +70,52 @@ func TestQuotaHistoryUsesRegisteredCredentialAndValidatesBatch(t *testing.T) {
 		}
 		if query == "period=7d" && (rec.Code != http.StatusOK || rec.Header().Get("Cache-Control") != "no-store") {
 			t.Fatalf("read failed: %d %s", rec.Code, rec.Body.String())
+		}
+	}
+}
+
+func TestQuotaHistoryAllIncludesOlderAccountsWithoutMakingThemCurrent(t *testing.T) {
+	h := NewHandler(&config.Config{}, filepath.Join(t.TempDir(), "config.yaml"), nil)
+	remaining := 33.0
+	period := 168.0
+	old := time.Now().Add(-70 * 24 * time.Hour).UnixMilli()
+	if err := quotahistory.Record(context.Background(), h.quotaHistoryPath(), []quotahistory.Observation{{
+		Credential: "codexbar:old", Provider: "codex", WindowID: "weekly", Label: "CodexBar weekly",
+		ObservedAtMs: old, Remaining: &remaining, PeriodHours: &period,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	windowID := ""
+	for _, endpoint := range []string{"raw", "snapshot", "view"} {
+		rec := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(rec)
+		c.Request = httptest.NewRequest(http.MethodGet, "/?period=all&provider=codex&account=codexbar:old&window="+url.QueryEscape(windowID), nil)
+		switch endpoint {
+		case "raw":
+			h.GetQuotaHistory(c)
+		case "snapshot":
+			h.GetQuotaHistorySnapshot(c)
+		case "view":
+			h.GetQuotaHistoryView(c)
+		}
+		if rec.Code != http.StatusOK || !bytes.Contains(rec.Body.Bytes(), []byte("codexbar:old")) {
+			t.Fatalf("old history missing from %s: %d %s", endpoint, rec.Code, rec.Body.String())
+		}
+		if endpoint == "snapshot" && !bytes.Contains(rec.Body.Bytes(), []byte(`"active":false`)) {
+			t.Fatal("historical account treated as current")
+		}
+		if endpoint == "snapshot" {
+			var snapshot struct {
+				Accounts []struct {
+					HistoryWindows []struct {
+						ID string `json:"id"`
+					} `json:"historyWindows"`
+				} `json:"accounts"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &snapshot); err != nil {
+				t.Fatal(err)
+			}
+			windowID = snapshot.Accounts[0].HistoryWindows[0].ID
 		}
 	}
 }

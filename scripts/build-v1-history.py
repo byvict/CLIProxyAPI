@@ -69,6 +69,9 @@ for name in names:
     body = body.replace('data-filter="${p.provider}"', 'data-filter="${esc(p.provider)}"').replace('data-filter="${p}"', 'data-filter="${esc(p)}"')
     if name == "drawChart":
         body = body.replace("O monitor continua coletando com o painel fechado.", "As próximas leituras aparecerão nesta seleção.")
+        body = body.replace("const minT = now - periodMs;", "const minT = state.period === 'all' ? Math.min(now - 86400000, ...series.map(p => p.t)) : now - periodMs;")
+    if name == "selectors":
+        body = body.replace("['30d', 'Últimos 30 dias']", "['30d', 'Últimos 30 dias'], ['all', 'Todo o histórico']")
     parts.append(body)
 render = function("render").replace("document.getElementById", "elementById")
 render = render.replace("<h1>Monitor de assinaturas</h1>", "<h1>Quota History</h1>")

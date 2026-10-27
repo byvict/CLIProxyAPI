@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Import v1 observations only when the proxy credential's identity matches exactly."""
+"""Import v1 observations, keeping unmatched accounts in separate historical series."""
 
 import argparse
 import base64
@@ -80,6 +80,12 @@ def main():
             mappings[account] = (indices[path.name], credential["type"])
         else:
             unmatched[credential.get("type", "unknown")] += 1
+    matched_credentials = len(mappings)
+    archived = 0
+    for account, provider in source.execute("SELECT id, provider FROM accounts"):
+        if account not in mappings:
+            mappings[account] = ("v1-account:" + account, {"muse": "meta", "grok": "xai"}.get(provider, provider))
+            archived += 1
     observations = []
     series = {}
     latest_basis = {}
@@ -118,7 +124,7 @@ def main():
             if account == series_account:
                 observations.append((*last[:4], at_ns // 1_000_000, None, last[6], last[7]))
     counts = Counter(row[1] for row in observations)
-    result = {"matchedCredentials": len(mappings), "unmatchedProviders": dict(unmatched),
+    result = {"matchedCredentials": matched_credentials, "archivedAccounts": archived, "unmatchedProviders": dict(unmatched),
               "observationsByProvider": dict(counts), "dryRun": args.dry_run}
     if not args.dry_run:
         if not args.destination.is_file():

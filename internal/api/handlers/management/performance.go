@@ -22,7 +22,8 @@ func (h *Handler) GetPerformance(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "T3code data directory is unavailable"})
 		return
 	}
-	report, err := performance.ReadT3(c.Request.Context(), filepath.Join(home, ".t3", "userdata", "statev2.sqlite"), time.Now())
+	report, err := performance.ReadActivity(c.Request.Context(), filepath.Join(home, ".t3", "userdata", "statev2.sqlite"),
+		filepath.Join(filepath.Dir(h.configFilePath), "performance-history.sqlite"), time.Now())
 	if os.IsNotExist(err) {
 		c.JSON(http.StatusOK, gin.H{"status": "unavailable"})
 		return

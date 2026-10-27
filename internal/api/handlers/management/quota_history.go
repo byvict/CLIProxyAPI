@@ -19,12 +19,17 @@ func (h *Handler) quotaHistoryPath() string {
 func (h *Handler) GetQuotaHistory(c *gin.Context) {
 	periods := map[string]time.Duration{"24h": 24 * time.Hour, "7d": 7 * 24 * time.Hour, "30d": 30 * 24 * time.Hour}
 	period, ok := periods[c.DefaultQuery("period", "30d")]
-	if !ok {
+	all := c.Query("period") == "all"
+	if !ok && !all {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid quota history period"})
 		return
 	}
 	now := time.Now()
-	observations, err := quotahistory.Read(c.Request.Context(), h.quotaHistoryPath(), now.Add(-period).UnixMilli(), now.UnixMilli())
+	since := int64(0)
+	if !all {
+		since = now.Add(-period).UnixMilli()
+	}
+	observations, err := quotahistory.Read(c.Request.Context(), h.quotaHistoryPath(), since, now.UnixMilli())
 	if err != nil {
 		log.WithError(err).Error("read quota history")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not read quota history"})
@@ -36,7 +41,7 @@ func (h *Handler) GetQuotaHistory(c *gin.Context) {
 
 func (h *Handler) quotaHistoryViewData(c *gin.Context) ([]quotahistory.Observation, quotahistory.Snapshot, time.Time, bool) {
 	now := time.Now()
-	observations, err := quotahistory.Read(c.Request.Context(), h.quotaHistoryPath(), now.Add(-30*24*time.Hour).UnixMilli(), now.UnixMilli())
+	observations, err := quotahistory.Read(c.Request.Context(), h.quotaHistoryPath(), 0, now.UnixMilli())
 	if err != nil {
 		log.WithError(err).Error("read quota history view")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not read quota history"})
@@ -66,12 +71,19 @@ func (h *Handler) GetQuotaHistorySnapshot(c *gin.Context) {
 func (h *Handler) GetQuotaHistoryView(c *gin.Context) {
 	periods := map[string]time.Duration{"24h": 24 * time.Hour, "7d": 7 * 24 * time.Hour, "30d": 30 * 24 * time.Hour}
 	period, valid := periods[c.DefaultQuery("period", "24h")]
-	if !valid {
+	all := c.Query("period") == "all"
+	if !valid && !all {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid quota history period"})
 		return
 	}
 	observations, snapshot, now, ok := h.quotaHistoryViewData(c)
 	if ok {
+		if all {
+			period = 24 * time.Hour
+			for _, observation := range observations {
+				period = max(period, now.Sub(time.UnixMilli(observation.ObservedAtMs)))
+			}
+		}
 		c.JSON(http.StatusOK, quotahistory.MakeView(observations, snapshot, c.Query("provider"), c.Query("account"), c.Query("window"), period, now))
 	}
 }

@@ -17,9 +17,9 @@ func TestReadT3AggregatesNativeTurnsWithoutDoubleCountingTokens(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	for _, statement := range []string{
-		`CREATE TABLE orchestration_v2_projection_provider_threads (provider_thread_id TEXT, thread_id TEXT, provider TEXT)`,
-		`CREATE TABLE orchestration_v2_projection_provider_turns (provider_thread_id TEXT, thread_id TEXT, started_at TEXT, completed_at TEXT, payload_json TEXT)`,
-		`INSERT INTO orchestration_v2_projection_provider_threads VALUES ('c','c','claudeAgent'), ('x','x','codex'), ('g','g','grok'), ('m','m','muse'), ('z','z','cursor')`,
+		`CREATE TABLE orchestration_v2_projection_provider_threads (provider_thread_id TEXT, thread_id TEXT, provider TEXT, payload_json TEXT)`,
+		`CREATE TABLE orchestration_v2_projection_provider_turns (provider_thread_id TEXT, thread_id TEXT, started_at TEXT, completed_at TEXT, payload_json TEXT, provider_turn_id TEXT)`,
+		`INSERT INTO orchestration_v2_projection_provider_threads VALUES ('c','c','claudeAgent','{}'), ('x','x','codex','{}'), ('g','g','grok','{}'), ('m','m','muse','{}'), ('z','z','cursor','{}')`,
 	} {
 		if _, err = db.Exec(statement); err != nil {
 			t.Fatal(err)
@@ -27,7 +27,7 @@ func TestReadT3AggregatesNativeTurnsWithoutDoubleCountingTokens(t *testing.T) {
 	}
 	insert := func(provider, start, end, usage string) {
 		t.Helper()
-		_, errInsert := db.Exec(`INSERT INTO orchestration_v2_projection_provider_turns VALUES (?, ?, ?, ?, ?)`, provider, provider, start, end, usage)
+		_, errInsert := db.Exec(`INSERT INTO orchestration_v2_projection_provider_turns VALUES (?, ?, ?, ?, ?, ?)`, provider, provider, start, end, usage, provider+start)
 		if errInsert != nil {
 			t.Fatal(errInsert)
 		}
