@@ -1,0 +1,29 @@
+.timeMarker {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 4;
+  width: 3px;
+  transform: translateX(-50%);
+}
+.exhaustionMarker {
+  background: var(--marker-color);
+  &[data-band='green'] {
+    --marker-color: color-mix(in srgb, var(--viz-success) 75%, var(--text-tertiary));
+  }
+  &[data-band='blue'] {
+    --marker-color: color-mix(in srgb, #64b5f6 65%, var(--text-tertiary));
+  }
+  &[data-band='yellow'] {
+    --marker-color: color-mix(in srgb, var(--quota-medium-color) 65%, var(--text-tertiary));
+  }
+  &[data-band='red'] {
+    --marker-color: color-mix(in srgb, var(--error-color) 85%, var(--text-tertiary));
+  }
+}
+.projectionStatus {
+  color: var(--text-tertiary);
+  font-size: 10px;
+  line-height: 1.4;
+  margin-top: 5px;
+}

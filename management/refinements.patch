@@ -1,0 +1,925 @@
+diff --git a/src/components/layout/MainLayout.tsx b/src/components/layout/MainLayout.tsx
+index b58f97c..99b593a 100644
+--- a/src/components/layout/MainLayout.tsx
++++ b/src/components/layout/MainLayout.tsx
+@@ -16,6 +16,7 @@ import { useTranslation } from 'react-i18next';
+ import { Button } from '@/components/ui/Button';
+ import { PageTransition } from '@/components/common/PageTransition';
+ import { MainRoutes } from '@/router/MainRoutes';
++import { QuotaHistoryCollector } from '@/features/quotaHistory/QuotaHistoryCollector';
+ import { authFilesApi, pluginsApi } from '@/services/api';
+ import {
+   IconSidebarAuthFiles,
+@@ -102,7 +103,7 @@ interface SidebarNavGroup {
+ const flattenNavItems = (items: SidebarNavItem[]): SidebarNavLinkItem[] =>
+   items.flatMap((item) => (item.kind === 'drawer' ? item.children : [item]));
+ 
+-/** 点击菜单外或按下 Escape 时关闭弹出菜单 */
++/** Close the popover on an outside click or Escape. */
+ function useMenuDismiss(
+   open: boolean,
+   menuRef: RefObject<HTMLDivElement | null>,
+@@ -646,6 +647,12 @@ export function MainLayout() {
+           metaKey: 'nav_meta.quota_management',
+           icon: sidebarIcons.quota,
+         },
++        {
++          path: '/quota-history',
++          labelKey: 'nav.quota_history',
++          metaKey: 'nav_meta.quota_history',
++          icon: sidebarIcons.quota,
++        },
+         {
+           path: '/logs',
+           labelKey: 'nav.logs',
+@@ -1202,6 +1209,7 @@ export function MainLayout() {
+               isPluginResourcePage ? ' main-content-plugin-resource' : ''
+             }`}
+           >
++            <QuotaHistoryCollector />
+             <PageTransition
+               render={(location) => <MainRoutes location={location} />}
+               getRouteOrder={getRouteOrder}
+diff --git a/src/features/quota/components/QuotaTimeline.module.scss b/src/features/quota/components/QuotaTimeline.module.scss
+index 5cb3a81..a818a77 100644
+--- a/src/features/quota/components/QuotaTimeline.module.scss
++++ b/src/features/quota/components/QuotaTimeline.module.scss
+@@ -155,6 +155,7 @@ $lane-width: 210px;
+ }
+ 
+ .lane {
++  height: 64px;
+   border-top: 1px solid var(--border-color);
+ 
+   &:hover {
+@@ -165,7 +166,7 @@ $lane-width: 210px;
+ .laneHead {
+   display: flex;
+   flex-direction: column;
+-  gap: 3px;
++  justify-content: center;
+   padding: 9px 12px;
+   min-width: 0;
+ }
+@@ -194,35 +195,6 @@ $lane-width: 210px;
+   white-space: nowrap;
+ }
+ 
+-.lanePeriod {
+-  flex: none;
+-  padding: 0 6px;
+-  border-radius: 999px;
+-  font-size: 10px;
+-  font-weight: 600;
+-  color: var(--count-badge-text, var(--text-secondary));
+-  background: var(--count-badge-bg, var(--bg-tertiary));
+-}
+-
+-.laneLimits {
+-  display: flex;
+-  flex-wrap: wrap;
+-  gap: 4px;
+-}
+-
+-.laneLimit {
+-  padding: 1px 6px;
+-  border-radius: $radius-sm;
+-  font-size: 10.5px;
+-  color: var(--text-quaternary);
+-  background: var(--bg-tertiary);
+-
+-  b {
+-    color: var(--text-secondary);
+-    font-variant-numeric: tabular-nums;
+-  }
+-}
+-
+ .track {
+   position: relative;
+   min-height: 46px;
+@@ -245,16 +217,8 @@ $lane-width: 210px;
+   }
+ }
+ 
+-// Vertical "now" marker, above the grid but below the bars so it never hides
+-// a label.
+ .nowLine {
+-  position: absolute;
+-  top: 0;
+-  bottom: 0;
+-  width: 1px;
+-  background: var(--text-tertiary, var(--text-quaternary));
+-  opacity: 0.8;
+-  z-index: 1;
++  background: #fff;
+ }
+ 
+ .window {
+@@ -336,52 +300,6 @@ $lane-width: 210px;
+   color: var(--text-quaternary);
+ }
+ 
+-.legend {
+-  display: flex;
+-  align-items: center;
+-  flex-wrap: wrap;
+-  gap: $spacing-md;
+-  font-size: 11px;
+-  color: var(--text-quaternary);
+-}
+-
+-.legendItem {
+-  display: inline-flex;
+-  align-items: center;
+-  gap: 6px;
+-}
+-
+-.swatch {
+-  width: 22px;
+-  height: 10px;
+-  border-radius: 999px;
+-}
+-
+-.swatchLive {
+-  background: color-mix(in srgb, var(--text-tertiary, #888) 34%, transparent);
+-  border: 1px solid color-mix(in srgb, var(--text-tertiary, #888) 50%, transparent);
+-}
+-
+-.swatchNext {
+-  border: 1px dashed color-mix(in srgb, var(--text-tertiary, #888) 45%, transparent);
+-}
+-
+-.swatchPast {
+-  background: color-mix(in srgb, var(--text-tertiary, #888) 12%, transparent);
+-}
+-
+-.swatchCredit {
+-  width: 2px;
+-  height: 14px;
+-  border-radius: 999px;
+-  background: var(--amber-color);
+-}
+-
+-.legendNote {
+-  flex: 1 1 320px;
+-  min-width: 0;
+-}
+-
+ @include mobile {
+   // The lane column can't shrink much before names become unreadable, so the
+   // chart scrolls horizontally rather than compressing to illegibility.
+diff --git a/src/features/quota/components/QuotaTimeline.tsx b/src/features/quota/components/QuotaTimeline.tsx
+index 1e4d292..1b0a0d7 100644
+--- a/src/features/quota/components/QuotaTimeline.tsx
++++ b/src/features/quota/components/QuotaTimeline.tsx
+@@ -18,6 +18,12 @@ import { useTranslation } from 'react-i18next';
+ import { formatRelativeInstant, TYPE_COLORS } from '@/utils/quota';
+ import { getQuotaCacheKey, getQuotaDisplayName } from '@/utils/quota/identity';
+ import { useNow } from '@/hooks/useNow';
++import { useQuotaHistory } from '@/features/quotaHistory/useQuotaHistory';
++import { ExhaustionMarker } from '@/features/quotaHistory/ExhaustionMarker';
++import { quotaProjection } from '@/features/quotaHistory/projection';
++import type { QuotaProjection } from '@/features/quotaHistory/projection';
++import { normalizeAuthIndex } from '@/utils/authIndex';
++import historyStyles from '@/features/quotaHistory/QuotaHistory.module.scss';
+ import type { ResolvedTheme, ThemeColors } from '@/types';
+ import {
+   buildTimelineLane,
+@@ -74,6 +80,7 @@ export function QuotaTimeline({
+   const { t } = useTranslation();
+   const [mode, setMode] = useState<TimelineMode>(initialMode);
+   const [offset, setOffset] = useState(initialOffset);
++  const { observations, error: historyError } = useQuotaHistory();
+ 
+   // The clock has to advance on its own: bars are classified past/live/next
+   // against it and the marker is positioned by it, so a long-lived tab would
+@@ -127,6 +134,35 @@ export function QuotaTimeline({
+     [laneInputs, mode, span.days]
+   );
+ 
++  const projections = useMemo(() => {
++    const byCredential = new Map<string, Map<string, typeof observations>>();
++    for (const sample of observations) {
++      const windows = byCredential.get(sample.credential) ?? new Map();
++      const samples = windows.get(sample.windowId) ?? [];
++      samples.push(sample);
++      windows.set(sample.windowId, samples);
++      byCredential.set(sample.credential, windows);
++    }
++    const identities = new Map(
++      entries.map((entry) => [
++        getQuotaCacheKey(entry.file),
++        normalizeAuthIndex(entry.file.authIndex),
++      ])
++    );
++    return new Map(
++      lanes.map((lane) => {
++        const samples =
++          byCredential.get(identities.get(lane.name) ?? '')?.get(lane.windowId ?? '') ?? [];
++        const latest = samples[samples.length - 1];
++        const matchesReset =
++          latest?.resetAtMs !== null &&
++          lane.anchorMs !== null &&
++          Math.abs((latest?.resetAtMs ?? 0) - lane.anchorMs) <= 60_000;
++        return [lane.name, quotaProjection(matchesReset ? samples : [], now)];
++      })
++    );
++  }, [observations, entries, lanes, now]);
++
+   /** Weekly: one cell per day. Session: one per 6 hours. */
+   const cells = useMemo(() => {
+     const zoomed = mode === 'session';
+@@ -265,44 +301,17 @@ export function QuotaTimeline({
+                 cells={cells}
+                 nowPercent={nowPercent}
+                 resolvedTheme={resolvedTheme}
++                projection={projections.get(lane.name) ?? { status: 'insufficient' }}
+               />
+             ))}
+           </>
+         )}
+       </div>
+ 
+-      {lanes.length > 0 && (
+-        <footer className={styles.legend}>
+-          <span className={styles.legendItem}>
+-            <span className={`${styles.swatch} ${styles.swatchLive}`} />
+-            {t('quota_management.windows_legend_current', { defaultValue: 'current window' })}
+-          </span>
+-          <span className={styles.legendItem}>
+-            <span className={`${styles.swatch} ${styles.swatchNext}`} />
+-            {t('quota_management.windows_legend_upcoming', { defaultValue: 'upcoming' })}
+-          </span>
+-          <span className={styles.legendItem}>
+-            <span className={`${styles.swatch} ${styles.swatchPast}`} />
+-            {t('quota_management.windows_legend_elapsed', { defaultValue: 'elapsed' })}
+-          </span>
+-          <span className={styles.legendItem}>
+-            <span className={styles.swatchCredit} />
+-            {t('quota_management.windows_legend_reset_credit', {
+-              defaultValue: 'manual reset expiry',
+-            })}
+-          </span>
+-          <span className={styles.legendNote}>
+-            {mode === 'weekly'
+-              ? t('quota_management.windows_note_weekly', {
+-                  defaultValue:
+-                    'Each bar is one full quota window, drawn from when it opened to when it resets. Lanes ending together compete for the same days.',
+-                })
+-              : t('quota_management.windows_note_session', {
+-                  defaultValue:
+-                    'Each bar is one 5-hour window. Only credentials with a window counting down can be projected; the rest stay empty rather than invented.',
+-                })}
+-          </span>
+-        </footer>
++      {historyError && (
++        <p role="alert" className={historyStyles.projectionStatus}>
++          {historyError}
++        </p>
+       )}
+     </section>
+   );
+@@ -316,9 +325,10 @@ interface LaneProps {
+   cells: { at: number; isWeekend: boolean; isDayStart: boolean }[];
+   nowPercent: number | null;
+   resolvedTheme: ResolvedTheme;
++  projection: QuotaProjection;
+ }
+ 
+-function Lane({ lane, span, now, mode, cells, nowPercent, resolvedTheme }: LaneProps) {
++function Lane({ lane, span, now, mode, cells, nowPercent, resolvedTheme, projection }: LaneProps) {
+   const { t, i18n } = useTranslation();
+ 
+   const windows = useMemo(
+@@ -334,16 +344,6 @@ function Lane({ lane, span, now, mode, cells, nowPercent, resolvedTheme }: LaneP
+   const color: ThemeColors =
+     resolvedTheme === 'dark' && colorSet.dark ? colorSet.dark : colorSet.light;
+ 
+-  // Sub-day windows are labelled in hours — rounding 5h to days gives "0d".
+-  const periodLabel =
+-    mode === 'session'
+-      ? '5h'
+-      : !lane.periodHours
+-        ? ''
+-        : lane.periodHours < 24
+-          ? `${Math.round(lane.periodHours)}h`
+-          : `${Math.round(lane.periodHours / 24)}d`;
+-
+   return (
+     <div className={styles.lane} style={{ '--provider-accent': color.text } as CSSProperties}>
+       <div className={styles.laneHead}>
+@@ -352,15 +352,6 @@ function Lane({ lane, span, now, mode, cells, nowPercent, resolvedTheme }: LaneP
+           <span className={styles.laneName} title={lane.displayName}>
+             {lane.displayName}
+           </span>
+-          {periodLabel && <span className={styles.lanePeriod}>{periodLabel}</span>}
+-        </div>
+-        <div className={styles.laneLimits}>
+-          {lane.limits.map((limit) => (
+-            <span key={limit.label} className={styles.laneLimit}>
+-              {lane.provider === 'meta' ? t(limit.label) : limit.label}{' '}
+-              <b>{limit.remaining}%</b>
+-            </span>
+-          ))}
+         </div>
+       </div>
+ 
+@@ -376,7 +367,13 @@ function Lane({ lane, span, now, mode, cells, nowPercent, resolvedTheme }: LaneP
+         </div>
+ 
+         {nowPercent !== null && (
+-          <div className={styles.nowLine} style={{ left: `${nowPercent}%` }} />
++          <div
++            className={`${historyStyles.timeMarker} ${styles.nowLine}`}
++            style={{ left: `${nowPercent}%` }}
++            role="img"
++            aria-label={t('quota_history.now')}
++            title={t('quota_history.now')}
++          />
+         )}
+ 
+         {windows.length === 0 ? (
+@@ -425,6 +422,8 @@ function Lane({ lane, span, now, mode, cells, nowPercent, resolvedTheme }: LaneP
+           })
+         )}
+ 
++        <ExhaustionMarker projection={projection} startMs={span.startMs} endMs={span.endMs} />
++
+         {resetCredits.map((credit, index) => {
+           const grantedLabel = t('quota_management.windows_credit_granted', {
+             defaultValue: 'Granted',
+diff --git a/src/features/quota/providers/index.ts b/src/features/quota/providers/index.ts
+index 4b4b3a6..7eba5e8 100644
+--- a/src/features/quota/providers/index.ts
++++ b/src/features/quota/providers/index.ts
+@@ -1,11 +1,7 @@
+-/**
+- * 额度提供商适配器 = 数据层（data.ts，React-free）+ 渲染体（*QuotaBody.tsx）。
+- *
+- * 页面侧以擦除泛型的 QuotaAdapter 视图统一消费（与 AuthFileQuotaSection 的
+- * 窄接口 cast 同一模式）；具体状态类型由各 data.ts 的强类型导出承载。
+- */
++/** Provider adapters combine quota readers and their existing card bodies. */
+ 
+ import type { ComponentType } from 'react';
++import { withQuotaHistory } from '@/features/quotaHistory/historyReader';
+ import type { TFunction } from 'i18next';
+ import { useQuotaStore } from '@/stores';
+ import type { AuthFileItem } from '@/types';
+@@ -28,7 +24,7 @@ import { PluginQuotaBody } from './plugin/PluginQuotaBody';
+ import { XAI_CONFIG } from './xai/data';
+ import { XaiQuotaBody } from './xai/XaiQuotaBody';
+ 
+-/** 所有 provider 额度状态的公共骨架（各 *QuotaState 的结构子集）。 */
++/** Common state shared by the provider quota cards. */
+ export interface QuotaCardState {
+   status: 'idle' | 'loading' | 'success' | 'error';
+   error?: string;
+@@ -52,27 +48,27 @@ export interface QuotaAdapter {
+ }
+ 
+ export const QUOTA_ADAPTERS: Record<QuotaProviderType, QuotaAdapter> = {
+-  antigravity: {
++  antigravity: withQuotaHistory({
+     ...ANTIGRAVITY_CONFIG,
+     Body: AntigravityQuotaBody,
+-  } as unknown as QuotaAdapter,
+-  claude: { ...CLAUDE_CONFIG, Body: ClaudeQuotaBody } as unknown as QuotaAdapter,
+-  codex: { ...CODEX_CONFIG, Body: CodexQuotaBody } as unknown as QuotaAdapter,
+-  devin: { ...DEVIN_CONFIG, Body: DevinQuotaBody } as unknown as QuotaAdapter,
+-  kimi: { ...KIMI_CONFIG, Body: KimiQuotaBody } as unknown as QuotaAdapter,
+-  meta: { ...META_CONFIG, Body: MetaQuotaBody } as unknown as QuotaAdapter,
+-  plugin: { ...PLUGIN_CONFIG, Body: PluginQuotaBody } as unknown as QuotaAdapter,
+-  xai: { ...XAI_CONFIG, Body: XaiQuotaBody } as unknown as QuotaAdapter,
++  } as unknown as QuotaAdapter),
++  claude: withQuotaHistory({ ...CLAUDE_CONFIG, Body: ClaudeQuotaBody } as unknown as QuotaAdapter),
++  codex: withQuotaHistory({ ...CODEX_CONFIG, Body: CodexQuotaBody } as unknown as QuotaAdapter),
++  devin: withQuotaHistory({ ...DEVIN_CONFIG, Body: DevinQuotaBody } as unknown as QuotaAdapter),
++  kimi: withQuotaHistory({ ...KIMI_CONFIG, Body: KimiQuotaBody } as unknown as QuotaAdapter),
++  meta: withQuotaHistory({ ...META_CONFIG, Body: MetaQuotaBody } as unknown as QuotaAdapter),
++  plugin: withQuotaHistory({ ...PLUGIN_CONFIG, Body: PluginQuotaBody } as unknown as QuotaAdapter),
++  xai: withQuotaHistory({ ...XAI_CONFIG, Body: XaiQuotaBody } as unknown as QuotaAdapter),
+ };
+ 
+ export type QuotaMapUpdater = (
+   updater: (prev: Record<string, QuotaCardState>) => Record<string, QuotaCardState>
+ ) => void;
+ 
+-/** 取 adapter 对应的 store setter（getState 直读，不建立订阅）。 */
++/** Read the store setter without creating a subscription. */
+ export const getQuotaSetter = (adapter: QuotaAdapter): QuotaMapUpdater =>
+   useQuotaStore.getState()[adapter.storeSetter] as unknown as QuotaMapUpdater;
+ 
+-/** 取 adapter 对应的额度缓存快照（getState 直读，不建立订阅）。 */
++/** Read the current provider quota cache without subscribing. */
+ export const getQuotaMap = (adapter: QuotaAdapter): Record<string, QuotaCardState> =>
+   adapter.storeSelector(useQuotaStore.getState() as unknown as QuotaStore);
+diff --git a/src/features/quota/quotaTimelineModel.ts b/src/features/quota/quotaTimelineModel.ts
+index 39f6113..e154cf0 100644
+--- a/src/features/quota/quotaTimelineModel.ts
++++ b/src/features/quota/quotaTimelineModel.ts
+@@ -50,6 +50,7 @@ export interface TimelineLane {
+   name: string;
+   displayName: string;
+   provider: QuotaProviderType;
++  windowId?: string | null;
+   /** Instant a window boundary falls on; all other boundaries derive from it. */
+   anchorMs: number | null;
+   /** Window length in hours. */
+@@ -283,6 +284,7 @@ interface ResetCreditLike {
+ }
+ 
+ interface KimiRowLike {
++  id?: string;
+   label?: string;
+   labelKey?: string;
+   used: number;
+@@ -300,6 +302,8 @@ interface XaiBillingLike {
+ }
+ 
+ interface AntigravityBucketLike {
++  id?: string;
++  historyId?: string;
+   label?: string;
+   /** Fraction 0..1 of quota REMAINING — the inverse of the percent-used providers. */
+   remainingFraction?: number | null;
+@@ -402,6 +406,7 @@ export function buildTimelineLane(input: TimelineLaneInput): TimelineLane {
+ 
+     return {
+       ...empty,
++      windowId: chosen.id ?? chosen.label ?? null,
+       anchorMs: chosen.resetAtMs ?? null,
+       periodHours: chosen.periodHours ?? null,
+       // Claude and Codex store percent USED.
+@@ -434,6 +439,7 @@ export function buildTimelineLane(input: TimelineLaneInput): TimelineLane {
+     if (!chosen) return empty;
+     return {
+       ...empty,
++      windowId: chosen.id,
+       anchorMs: chosen.resetAtMs,
+       periodHours: chosen.periodHours,
+       remaining: chosen.remainingPercent,
+@@ -460,6 +466,7 @@ export function buildTimelineLane(input: TimelineLaneInput): TimelineLane {
+ 
+     return {
+       ...empty,
++      windowId: 'weekly',
+       anchorMs: billing.resetAtMs,
+       // A payload that states an end without a start can't derive its own
+       // length; weekly is what `periodType` already told us.
+@@ -473,8 +480,15 @@ export function buildTimelineLane(input: TimelineLaneInput): TimelineLane {
+   if (provider === 'antigravity' || provider === 'plugin') {
+     // Buckets live one level down, inside groups, and the groups are a display
+     // concern the chart doesn't care about — flatten them.
+-    const buckets = ((quota as { groups?: { buckets?: AntigravityBucketLike[] }[] }).groups ?? [])
+-      .flatMap((group) => group.buckets ?? [])
++    const buckets = (
++      (quota as { groups?: { id?: string; buckets?: AntigravityBucketLike[] }[] }).groups ?? []
++    )
++      .flatMap((group) =>
++        (group.buckets ?? []).map((bucket, index) => ({
++          ...bucket,
++          historyId: `${group.id ?? ''}/${bucket.id ?? index}`,
++        }))
++      )
+       .filter((bucket) => typeof bucket.resetAtMs === 'number');
+     const chosen = pickLaneWindow(buckets, maxPeriodHours);
+     if (!chosen) return empty;
+@@ -489,6 +503,7 @@ export function buildTimelineLane(input: TimelineLaneInput): TimelineLane {
+       ...empty,
+       anchorMs: chosen.resetAtMs ?? null,
+       periodHours: chosen.periodHours ?? null,
++      windowId: chosen.historyId,
+       remaining: remainingOf(chosen),
+       limits: buckets
+         .map((bucket) => ({ label: bucket.label ?? '', remaining: remainingOf(bucket) }))
+@@ -511,6 +526,7 @@ export function buildTimelineLane(input: TimelineLaneInput): TimelineLane {
+       ...empty,
+       anchorMs: chosen.resetAtMs ?? null,
+       periodHours: chosen.periodHours ?? null,
++      windowId: chosen.id ?? chosen.labelKey ?? String(rows.indexOf(chosen)),
+       remaining: remainingOf(chosen),
+       limits: rows
+         .map((row) => ({ label: row.label ?? '', remaining: remainingOf(row) }))
+@@ -551,6 +567,7 @@ export function buildTimelineLane(input: TimelineLaneInput): TimelineLane {
+       ...empty,
+       anchorMs: chosen.resetAtMs,
+       periodHours: chosen.periodHours,
++      windowId: chosen.id,
+       remaining: remainingOf(chosen),
+       limits: windows
+         .map((window) => ({
+diff --git a/src/i18n/locales/en.json b/src/i18n/locales/en.json
+index 54eeef1..c94f9bc 100644
+--- a/src/i18n/locales/en.json
++++ b/src/i18n/locales/en.json
+@@ -107,7 +107,8 @@
+     "plugin_store": "Plugin Store",
+     "config_management": "Config Panel",
+     "logs": "Logs Viewer",
+-    "system_info": "Management Center Info"
++    "system_info": "Management Center Info",
++    "quota_history": "Quota History"
+   },
+   "nav_groups": {
+     "operate": "Operate",
+@@ -127,7 +128,8 @@
+     "plugin_store": "Discover & install plugins",
+     "logs": "Request tracing",
+     "config_management": "Gateway configuration",
+-    "system_info": "Runtime & diagnostics"
++    "system_info": "Runtime & diagnostics",
++    "quota_history": "Consumption history"
+   },
+   "dashboard": {
+     "hero_verdict_good": "All systems steady",
+@@ -2310,5 +2312,38 @@
+     "error": "Binding failed. Please start over.",
+     "unsupported": "This backend does not support SIWC binding.",
+     "expired": "The binding session expired. Please start over."
++  },
++  "quota_history": {
++    "title": "Quota History",
++    "subtitle": "Observed consumption by credential and quota window · São Paulo time.",
++    "provider": "Provider",
++    "credential": "Credential",
++    "window": "Quota window",
++    "period": "History",
++    "empty": "No quota history yet. Readings are collected every five minutes while the panel is connected; Muse uses a 30-minute interval.",
++    "coverage": "Observed coverage: {{value}}%",
++    "rate": "Consumption rate · one-hour average (p.p./h)",
++    "insufficient_rate": "A complete hour of observations is needed to show the rate.",
++    "hourly": "Consumption by hour",
++    "daily": "Consumption by day",
++    "partial_bins": "Dashed bars show incomplete coverage. Only intervals entirely within each bin are counted; missing readings are not zero consumption.",
++    "intervals": "Unassigned intervals and completed cycles",
++    "interval": "Interval",
++    "unassigned": "Unassigned consumption",
++    "unused": "Reset confirmed at {{at}}. Unused quota is bounded between 0 and {{value}} p.p.; last observed at {{last}}.",
++    "heatmap": "When does consumption accelerate?",
++    "heatmap_note": "São Paulo time. Cells show attributed consumption and observed hours; partial coverage is not a full-hour total.",
++    "observed_hours": "{{value}} observed hours",
++    "marker_detail": "Projected exhaustion: {{at}} (São Paulo) · {{offset}}h relative to reset · previous {{hours}}h average: {{rate}} p.p./h. Extrapolates the current balance without reset replenishment.",
++    "bands": "Now: white · Projected exhaustion: green ±6h · blue ±12h · yellow ±24h · red >24h from reset, before or after.",
++    "now": "Current time",
++    "insufficient": "Projection: insufficient history for the time remaining until reset.",
++    "stale": "Projection paused: readings are stale.",
++    "reset-passed": "Projection paused: awaiting the new quota cycle.",
++    "no-consumption": "No finite exhaustion time: no consumption observed.",
++    "inspect_rate": "Use the pointer or Left and Right arrows to inspect readings.",
++    "collection_failed": "Quota history collection failed. Check the connection and refresh.",
++    "marker_coverage": "Observed {{observed}}h · coverage {{coverage}}% of the requested lookback",
++    "projected_coverage": "Projected · {{value}}% history coverage"
+   }
+ }
+diff --git a/src/i18n/locales/ko.json b/src/i18n/locales/ko.json
+index 08a4a7f..926ad20 100644
+--- a/src/i18n/locales/ko.json
++++ b/src/i18n/locales/ko.json
+@@ -107,7 +107,8 @@
+     "plugin_store": "플러그인 스토어",
+     "config_management": "설정 패널",
+     "logs": "로그 뷰어",
+-    "system_info": "관리 센터 정보"
++    "system_info": "관리 센터 정보",
++    "quota_history": "Quota History"
+   },
+   "nav_groups": {
+     "operate": "운영",
+@@ -127,7 +128,8 @@
+     "plugin_store": "플러그인 탐색 및 설치",
+     "logs": "요청 추적",
+     "config_management": "게이트웨이 설정",
+-    "system_info": "런타임 및 진단"
++    "system_info": "런타임 및 진단",
++    "quota_history": "Consumption history"
+   },
+   "dashboard": {
+     "hero_verdict_good": "모든 시스템 정상",
+@@ -2310,5 +2312,38 @@
+     "error": "바인딩에 실패했습니다. 다시 시작하세요.",
+     "unsupported": "이 서버는 SIWC 바인딩을 지원하지 않습니다.",
+     "expired": "바인딩 세션이 만료되었습니다. 다시 시작하세요."
++  },
++  "quota_history": {
++    "title": "Quota History",
++    "subtitle": "자격 증명 및 할당량 구간별 관측 사용량 · 상파울루 시간.",
++    "provider": "공급자",
++    "credential": "자격 증명",
++    "window": "할당량 구간",
++    "period": "기록",
++    "empty": "No quota history yet. Readings are collected every five minutes while the panel is connected; Muse uses a 30-minute interval.",
++    "coverage": "관측 범위: {{value}}%",
++    "rate": "소비 속도 · 시간당 평균 (퍼센트포인트/시간)",
++    "insufficient_rate": "A complete hour of observations is needed to show the rate.",
++    "hourly": "시간별 소비",
++    "daily": "일별 소비",
++    "partial_bins": "Dashed bars show incomplete coverage. Only intervals entirely within each bin are counted; missing readings are not zero consumption.",
++    "intervals": "Unassigned intervals and completed cycles",
++    "interval": "Interval",
++    "unassigned": "Unassigned consumption",
++    "unused": "Reset confirmed at {{at}}. Unused quota is bounded between 0 and {{value}} p.p.; last observed at {{last}}.",
++    "heatmap": "소비가 빨라지는 시간은 언제인가요?",
++    "heatmap_note": "São Paulo time. Cells show attributed consumption and observed hours; partial coverage is not a full-hour total.",
++    "observed_hours": "{{value}} observed hours",
++    "marker_detail": "Projected exhaustion: {{at}} (São Paulo) · {{offset}}h relative to reset · previous {{hours}}h average: {{rate}} p.p./h. Extrapolates the current balance without reset replenishment.",
++    "bands": "Now: white · Projected exhaustion: green ±6h · blue ±12h · yellow ±24h · red >24h from reset, before or after.",
++    "now": "현재 시간",
++    "insufficient": "Projection: insufficient history for the time remaining until reset.",
++    "stale": "Projection paused: readings are stale.",
++    "reset-passed": "Projection paused: awaiting the new quota cycle.",
++    "no-consumption": "No finite exhaustion time: no consumption observed.",
++    "inspect_rate": "Use the pointer or Left and Right arrows to inspect readings.",
++    "collection_failed": "Quota history collection failed. Check the connection and refresh.",
++    "marker_coverage": "Observed {{observed}}h · coverage {{coverage}}% of the requested lookback",
++    "projected_coverage": "Projected · {{value}}% history coverage"
+   }
+ }
+diff --git a/src/i18n/locales/ru.json b/src/i18n/locales/ru.json
+index 8e5373d..46ba199 100644
+--- a/src/i18n/locales/ru.json
++++ b/src/i18n/locales/ru.json
+@@ -107,7 +107,8 @@
+     "plugin_store": "Магазин плагинов",
+     "config_management": "Панель конфигурации",
+     "logs": "Просмотр логов",
+-    "system_info": "Информация системы"
++    "system_info": "Информация системы",
++    "quota_history": "Quota History"
+   },
+   "nav_groups": {
+     "operate": "Работа",
+@@ -126,7 +127,8 @@
+     "plugin_store": "Поиск и установка плагинов",
+     "logs": "Трассировка запросов",
+     "config_management": "Базовая конфигурация шлюза",
+-    "system_info": "Состояние и диагностика"
++    "system_info": "Состояние и диагностика",
++    "quota_history": "Consumption history"
+   },
+   "dashboard": {
+     "hero_verdict_good": "Всё стабильно",
+@@ -2304,5 +2306,38 @@
+     "error": "Привязка не удалась. Начните заново.",
+     "unsupported": "Этот сервер не поддерживает привязку SIWC.",
+     "expired": "Сеанс привязки истёк. Начните заново."
++  },
++  "quota_history": {
++    "title": "Quota History",
++    "subtitle": "Наблюдаемый расход по учётным данным и окнам квоты · время Сан-Паулу.",
++    "provider": "Провайдер",
++    "credential": "Учётные данные",
++    "window": "Окно квоты",
++    "period": "История",
++    "empty": "No quota history yet. Readings are collected every five minutes while the panel is connected; Muse uses a 30-minute interval.",
++    "coverage": "Покрытие наблюдений: {{value}}%",
++    "rate": "Темп расхода · среднее за час (п.п./ч)",
++    "insufficient_rate": "A complete hour of observations is needed to show the rate.",
++    "hourly": "Расход по часам",
++    "daily": "Расход по дням",
++    "partial_bins": "Dashed bars show incomplete coverage. Only intervals entirely within each bin are counted; missing readings are not zero consumption.",
++    "intervals": "Unassigned intervals and completed cycles",
++    "interval": "Interval",
++    "unassigned": "Unassigned consumption",
++    "unused": "Reset confirmed at {{at}}. Unused quota is bounded between 0 and {{value}} p.p.; last observed at {{last}}.",
++    "heatmap": "Когда расход ускоряется?",
++    "heatmap_note": "São Paulo time. Cells show attributed consumption and observed hours; partial coverage is not a full-hour total.",
++    "observed_hours": "{{value}} observed hours",
++    "marker_detail": "Projected exhaustion: {{at}} (São Paulo) · {{offset}}h relative to reset · previous {{hours}}h average: {{rate}} p.p./h. Extrapolates the current balance without reset replenishment.",
++    "bands": "Now: white · Projected exhaustion: green ±6h · blue ±12h · yellow ±24h · red >24h from reset, before or after.",
++    "now": "Текущее время",
++    "insufficient": "Projection: insufficient history for the time remaining until reset.",
++    "stale": "Projection paused: readings are stale.",
++    "reset-passed": "Projection paused: awaiting the new quota cycle.",
++    "no-consumption": "No finite exhaustion time: no consumption observed.",
++    "inspect_rate": "Use the pointer or Left and Right arrows to inspect readings.",
++    "collection_failed": "Quota history collection failed. Check the connection and refresh.",
++    "marker_coverage": "Observed {{observed}}h · coverage {{coverage}}% of the requested lookback",
++    "projected_coverage": "Projected · {{value}}% history coverage"
+   }
+ }
+diff --git a/src/i18n/locales/vi.json b/src/i18n/locales/vi.json
+index af88631..da7fc06 100644
+--- a/src/i18n/locales/vi.json
++++ b/src/i18n/locales/vi.json
+@@ -107,7 +107,8 @@
+     "plugin_store": "Cửa hàng Plugin",
+     "config_management": "Bảng cấu hình",
+     "logs": "Trình xem Log",
+-    "system_info": "Thông tin Trung tâm Quản lý"
++    "system_info": "Thông tin Trung tâm Quản lý",
++    "quota_history": "Quota History"
+   },
+   "nav_groups": {
+     "operate": "Vận hành",
+@@ -127,7 +128,8 @@
+     "plugin_store": "Khám phá & cài đặt plugin",
+     "logs": "Truy vết yêu cầu",
+     "config_management": "Cấu hình gateway",
+-    "system_info": "Runtime & chẩn đoán"
++    "system_info": "Runtime & chẩn đoán",
++    "quota_history": "Consumption history"
+   },
+   "dashboard": {
+     "hero_verdict_good": "Mọi hệ thống ổn định",
+@@ -2316,5 +2318,38 @@
+     "error": "Liên kết thất bại. Hãy bắt đầu lại.",
+     "unsupported": "Máy chủ này không hỗ trợ liên kết SIWC.",
+     "expired": "Phiên liên kết đã hết hạn. Hãy bắt đầu lại."
++  },
++  "quota_history": {
++    "title": "Quota History",
++    "subtitle": "Mức sử dụng quan sát theo thông tin xác thực và cửa sổ hạn mức · giờ São Paulo.",
++    "provider": "Nhà cung cấp",
++    "credential": "Thông tin xác thực",
++    "window": "Cửa sổ hạn mức",
++    "period": "Lịch sử",
++    "empty": "No quota history yet. Readings are collected every five minutes while the panel is connected; Muse uses a 30-minute interval.",
++    "coverage": "Phạm vi quan sát: {{value}}%",
++    "rate": "Tốc độ tiêu thụ · trung bình một giờ (điểm phần trăm/giờ)",
++    "insufficient_rate": "A complete hour of observations is needed to show the rate.",
++    "hourly": "Tiêu thụ theo giờ",
++    "daily": "Tiêu thụ theo ngày",
++    "partial_bins": "Dashed bars show incomplete coverage. Only intervals entirely within each bin are counted; missing readings are not zero consumption.",
++    "intervals": "Unassigned intervals and completed cycles",
++    "interval": "Interval",
++    "unassigned": "Unassigned consumption",
++    "unused": "Reset confirmed at {{at}}. Unused quota is bounded between 0 and {{value}} p.p.; last observed at {{last}}.",
++    "heatmap": "Khi nào mức tiêu thụ tăng nhanh?",
++    "heatmap_note": "São Paulo time. Cells show attributed consumption and observed hours; partial coverage is not a full-hour total.",
++    "observed_hours": "{{value}} observed hours",
++    "marker_detail": "Projected exhaustion: {{at}} (São Paulo) · {{offset}}h relative to reset · previous {{hours}}h average: {{rate}} p.p./h. Extrapolates the current balance without reset replenishment.",
++    "bands": "Now: white · Projected exhaustion: green ±6h · blue ±12h · yellow ±24h · red >24h from reset, before or after.",
++    "now": "Thời gian hiện tại",
++    "insufficient": "Projection: insufficient history for the time remaining until reset.",
++    "stale": "Projection paused: readings are stale.",
++    "reset-passed": "Projection paused: awaiting the new quota cycle.",
++    "no-consumption": "No finite exhaustion time: no consumption observed.",
++    "inspect_rate": "Use the pointer or Left and Right arrows to inspect readings.",
++    "collection_failed": "Quota history collection failed. Check the connection and refresh.",
++    "marker_coverage": "Observed {{observed}}h · coverage {{coverage}}% of the requested lookback",
++    "projected_coverage": "Projected · {{value}}% history coverage"
+   }
+ }
+diff --git a/src/i18n/locales/zh-CN.json b/src/i18n/locales/zh-CN.json
+index 9b98f6f..ccb6594 100644
+--- a/src/i18n/locales/zh-CN.json
++++ b/src/i18n/locales/zh-CN.json
+@@ -107,7 +107,8 @@
+     "plugin_store": "插件商店",
+     "config_management": "配置面板",
+     "logs": "日志查看",
+-    "system_info": "中心信息"
++    "system_info": "中心信息",
++    "quota_history": "Quota History"
+   },
+   "nav_groups": {
+     "operate": "运行",
+@@ -127,7 +128,8 @@
+     "plugin_store": "发现并安装插件",
+     "logs": "请求追踪与排查",
+     "config_management": "网关基础配置",
+-    "system_info": "运行与诊断信息"
++    "system_info": "运行与诊断信息",
++    "quota_history": "Consumption history"
+   },
+   "dashboard": {
+     "hero_verdict_good": "运行平稳",
+@@ -549,7 +551,6 @@
+     "reset_confirm_button": "确认重置",
+     "reset_not_confirmed": "未确认额度重置成功，请刷新额度后再决定是否重试。",
+     "reset_cooldown_failed": "额度已重置，但代理冷却清除失败。请在原连接的认证文件页面使用“清除冷却”，不要再次消耗重置卡。",
+-
+     "reset_success": "已重置 \"{{name}}\" 的 Codex 额度",
+     "reset_failed": "重置 \"{{name}}\" 的 Codex 额度失败：{{message}}",
+     "plan_plus": "Plus",
+@@ -2309,5 +2310,38 @@
+     "error": "绑定失败，请重新开始。",
+     "unsupported": "当前后端不支持 SIWC 绑定。",
+     "expired": "绑定会话已过期，请重新开始。"
++  },
++  "quota_history": {
++    "title": "Quota History",
++    "subtitle": "按凭据和额度窗口查看实际用量 · 圣保罗时间。",
++    "provider": "提供商",
++    "credential": "凭据",
++    "window": "额度窗口",
++    "period": "历史",
++    "empty": "No quota history yet. Readings are collected every five minutes while the panel is connected; Muse uses a 30-minute interval.",
++    "coverage": "观测覆盖率：{{value}}%",
++    "rate": "消耗速率 · 一小时平均值（百分点/小时）",
++    "insufficient_rate": "A complete hour of observations is needed to show the rate.",
++    "hourly": "每小时消耗",
++    "daily": "每日消耗",
++    "partial_bins": "Dashed bars show incomplete coverage. Only intervals entirely within each bin are counted; missing readings are not zero consumption.",
++    "intervals": "Unassigned intervals and completed cycles",
++    "interval": "Interval",
++    "unassigned": "Unassigned consumption",
++    "unused": "Reset confirmed at {{at}}. Unused quota is bounded between 0 and {{value}} p.p.; last observed at {{last}}.",
++    "heatmap": "哪些时段消耗较快？",
++    "heatmap_note": "São Paulo time. Cells show attributed consumption and observed hours; partial coverage is not a full-hour total.",
++    "observed_hours": "{{value}} observed hours",
++    "marker_detail": "Projected exhaustion: {{at}} (São Paulo) · {{offset}}h relative to reset · previous {{hours}}h average: {{rate}} p.p./h. Extrapolates the current balance without reset replenishment.",
++    "bands": "Now: white · Projected exhaustion: green ±6h · blue ±12h · yellow ±24h · red >24h from reset, before or after.",
++    "now": "当前时间",
++    "insufficient": "Projection: insufficient history for the time remaining until reset.",
++    "stale": "Projection paused: readings are stale.",
++    "reset-passed": "Projection paused: awaiting the new quota cycle.",
++    "no-consumption": "No finite exhaustion time: no consumption observed.",
++    "inspect_rate": "Use the pointer or Left and Right arrows to inspect readings.",
++    "collection_failed": "Quota history collection failed. Check the connection and refresh.",
++    "marker_coverage": "Observed {{observed}}h · coverage {{coverage}}% of the requested lookback",
++    "projected_coverage": "Projected · {{value}}% history coverage"
+   }
+ }
+diff --git a/src/i18n/locales/zh-TW.json b/src/i18n/locales/zh-TW.json
+index 9eb34ac..698c8fe 100644
+--- a/src/i18n/locales/zh-TW.json
++++ b/src/i18n/locales/zh-TW.json
+@@ -107,7 +107,8 @@
+     "plugin_store": "插件商店",
+     "config_management": "設定面板",
+     "logs": "記錄檢視",
+-    "system_info": "中心資訊"
++    "system_info": "中心資訊",
++    "quota_history": "Quota History"
+   },
+   "nav_groups": {
+     "operate": "運行",
+@@ -127,7 +128,8 @@
+     "plugin_store": "探索並安裝插件",
+     "logs": "請求追蹤與排查",
+     "config_management": "閘道基礎設定",
+-    "system_info": "運行與診斷資訊"
++    "system_info": "運行與診斷資訊",
++    "quota_history": "Consumption history"
+   },
+   "dashboard": {
+     "hero_verdict_good": "運行平穩",
+@@ -549,7 +551,6 @@
+     "reset_confirm_button": "確認重置",
+     "reset_not_confirmed": "尚未確認額度重置成功，請重新整理額度後再決定是否重試。",
+     "reset_cooldown_failed": "額度已重置，但代理冷卻清除失敗。請在原連線的認證檔案頁面使用「清除冷卻」，不要再次消耗重置卡。",
+-
+     "reset_success": "已重置「{{name}}」的 Codex 配額",
+     "reset_failed": "重置「{{name}}」的 Codex 配額失敗：{{message}}",
+     "plan_plus": "Plus",
+@@ -2337,5 +2338,38 @@
+     "error": "綁定失敗，請重新開始。",
+     "unsupported": "目前後端不支援 SIWC 綁定。",
+     "expired": "綁定工作階段已過期，請重新開始。"
++  },
++  "quota_history": {
++    "title": "Quota History",
++    "subtitle": "依憑證和配額視窗查看實際用量 · 聖保羅時間。",
++    "provider": "供應商",
++    "credential": "憑證",
++    "window": "配額視窗",
++    "period": "歷史",
++    "empty": "No quota history yet. Readings are collected every five minutes while the panel is connected; Muse uses a 30-minute interval.",
++    "coverage": "觀測涵蓋率：{{value}}%",
++    "rate": "消耗速率 · 一小時平均值（百分點/小時）",
++    "insufficient_rate": "A complete hour of observations is needed to show the rate.",
++    "hourly": "每小時消耗",
++    "daily": "每日消耗",
++    "partial_bins": "Dashed bars show incomplete coverage. Only intervals entirely within each bin are counted; missing readings are not zero consumption.",
++    "intervals": "Unassigned intervals and completed cycles",
++    "interval": "Interval",
++    "unassigned": "Unassigned consumption",
++    "unused": "Reset confirmed at {{at}}. Unused quota is bounded between 0 and {{value}} p.p.; last observed at {{last}}.",
++    "heatmap": "哪些時段消耗較快？",
++    "heatmap_note": "São Paulo time. Cells show attributed consumption and observed hours; partial coverage is not a full-hour total.",
++    "observed_hours": "{{value}} observed hours",
++    "marker_detail": "Projected exhaustion: {{at}} (São Paulo) · {{offset}}h relative to reset · previous {{hours}}h average: {{rate}} p.p./h. Extrapolates the current balance without reset replenishment.",
++    "bands": "Now: white · Projected exhaustion: green ±6h · blue ±12h · yellow ±24h · red >24h from reset, before or after.",
++    "now": "目前時間",
++    "insufficient": "Projection: insufficient history for the time remaining until reset.",
++    "stale": "Projection paused: readings are stale.",
++    "reset-passed": "Projection paused: awaiting the new quota cycle.",
++    "no-consumption": "No finite exhaustion time: no consumption observed.",
++    "inspect_rate": "Use the pointer or Left and Right arrows to inspect readings.",
++    "collection_failed": "Quota history collection failed. Check the connection and refresh.",
++    "marker_coverage": "Observed {{observed}}h · coverage {{coverage}}% of the requested lookback",
++    "projected_coverage": "Projected · {{value}}% history coverage"
+   }
+ }
+diff --git a/src/router/MainRoutes.tsx b/src/router/MainRoutes.tsx
+index 3867ead..92aa45a 100644
+--- a/src/router/MainRoutes.tsx
++++ b/src/router/MainRoutes.tsx
+@@ -6,6 +6,7 @@ import { AuthFilesOAuthExcludedEditPage } from '@/pages/AuthFilesOAuthExcludedEd
+ import { AuthFilesOAuthModelAliasEditPage } from '@/pages/AuthFilesOAuthModelAliasEditPage';
+ import { OAuthPage } from '@/features/oauth/OAuthPage';
+ import { QuotaPage } from '@/features/quota/QuotaPage';
++import { QuotaHistoryPage } from '@/features/quotaHistory/QuotaHistoryPage';
+ import { PluginResourcePage } from '@/features/plugins/PluginResourcePage';
+ import { PluginsPage } from '@/features/plugins/PluginsPage';
+ import { PluginStorePage } from '@/features/plugins/PluginStorePage';
+@@ -28,6 +29,7 @@ const createMainRoutes = (supportsPlugin: boolean) => [
+   { path: '/auth-files/oauth-model-alias', element: <AuthFilesOAuthModelAliasEditPage /> },
+   { path: '/oauth', element: <OAuthPage /> },
+   { path: '/quota', element: <QuotaPage /> },
++  { path: '/quota-history', element: <QuotaHistoryPage /> },
+   ...(supportsPlugin
+     ? [
+         { path: '/plugin-pages/:pluginId/:menuIndex', element: <PluginResourcePage /> },
