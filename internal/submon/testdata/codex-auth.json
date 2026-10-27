@@ -1,0 +1,6 @@
+{
+  "tokens": {
+    "access_token": "eyJhbGciOiJub25lIn0.eyJpc3MiOiAiZml4dHVyZS1pc3N1ZXIiLCAic3ViIjogImNvZGV4LXBlcnNvbiJ9.fixture-secret",
+    "account_id": "fixture-account"
+  }
+}

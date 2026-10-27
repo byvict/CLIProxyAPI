@@ -1,0 +1,7 @@
+{
+  "https://auth.x.ai::b1a00492-073a-47ea-816f-4c329264a828": {
+    "key": "eyJhbGciOiJub25lIn0.eyJpc3MiOiAiZml4dHVyZS1pc3N1ZXIiLCAic3ViIjogImdyb2stcGVyc29uIn0.fixture-secret",
+    "user_id": "fixture-grok-id",
+    "auth_mode": "oauth"
+  }
+}

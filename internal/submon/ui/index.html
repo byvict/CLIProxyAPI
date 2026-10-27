@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CLI Proxy · Monitor de assinaturas</title>
+<link rel="stylesheet" href="/style.css">
+<script src="/app.js" defer></script>
+</head>
+<body>
+
+<div class="cp-root" id="cp-monitor">
+<div class="cp-app">
+  <aside class="sidebar" aria-label="Menu principal">
+    <div class="brand"><span class="brand-mark" aria-hidden="true">c</span><div class="brand-copy"><strong>CLI Proxy</strong><small>ASSINATURAS</small></div></div>
+    <div><div class="nav-label">Monitoramento</div><nav class="nav">
+      <button type="button" data-nav="overview" aria-label="Visão geral" title="Visão geral" aria-current="page"><span class="nav-icon" aria-hidden="true">◫</span><span class="nav-text">Visão geral</span></button>
+      <button type="button" data-nav="accounts" aria-label="Cotas por conta" title="Cotas por conta"><span class="nav-icon" aria-hidden="true">▤</span><span class="nav-text">Cotas por conta</span></button>
+      <button type="button" data-nav="history" aria-label="Histórico" title="Histórico"><span class="nav-icon" aria-hidden="true">◷</span><span class="nav-text">Histórico</span></button>
+      <button type="button" data-nav="forecast" aria-label="Ritmo e projeções" title="Ritmo e projeções"><span class="nav-icon" aria-hidden="true">↗</span><span class="nav-text">Ritmo e projeções</span></button>
+    </nav></div>
+    <div class="side-bottom"><button type="button" class="side-link" data-action="snapshot" aria-label="Ver snapshot para escalação">⇄ <span>Dados para escalação</span></button><div class="side-note"><span class="live-dot"></span>Monitor V1<br>America/Sao_Paulo</div></div>
+  </aside>
+  <main class="main" id="screen" aria-live="polite"></main>
+</div>
+<div class="tooltip" id="chart-tooltip" role="tooltip"></div>
+<div class="refresh-status" id="refresh-status" role="status" hidden><span></span><button class="btn btn-small" data-action="apply-pending">Aplicar dados</button></div>
+<div class="toast" id="toast" role="status"></div>
+<div class="modal-backdrop" id="modal-backdrop" hidden><section class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title" tabindex="-1"><div class="modal-head"><h2 id="modal-title"></h2><button type="button" class="modal-close" data-action="close-modal" aria-label="Fechar">×</button></div><div class="modal-body" id="modal-body"></div><div class="modal-actions" id="modal-actions"></div></section></div>
+</div>
+
+</body>
+</html>

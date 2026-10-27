@@ -1,0 +1,9 @@
+{
+  "account": {
+    "uuid": "fixture-claude-person",
+    "email": "fixture-private@example.test"
+  },
+  "organization": {
+    "uuid": "fixture-org"
+  }
+}
