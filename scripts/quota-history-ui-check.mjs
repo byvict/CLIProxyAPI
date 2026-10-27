@@ -65,7 +65,8 @@ try {
   if (await notificationClose.count()) await notificationClose.first().click();
   results.push('All quota readers persist observations through the authenticated backend');
   const links = await page.locator('aside a').evaluateAll((nodes) => nodes.map((node) => node.getAttribute('href')));
-  assert.equal(links[links.indexOf('#/quota') + 1], '#/quota-history');
+  assert.equal(links[links.indexOf('#/quota') + 1], '#/performance');
+  assert.equal(links[links.indexOf('#/performance') + 1], '#/quota-history');
   for (const path of ['#/ai-providers', '#/auth-files', '#/oauth', '#/config', '#/logs']) assert(links.includes(path));
   await page.locator('a[href="#/quota"]').first().click();
   await page.locator('[data-band]').first().waitFor();

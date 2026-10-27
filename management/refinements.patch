@@ -1,5 +1,5 @@
 diff --git a/src/components/layout/MainLayout.tsx b/src/components/layout/MainLayout.tsx
-index b58f97c..99b593a 100644
+index b58f97c..e7f2833 100644
 --- a/src/components/layout/MainLayout.tsx
 +++ b/src/components/layout/MainLayout.tsx
 @@ -16,6 +16,7 @@ import { useTranslation } from 'react-i18next';
@@ -19,10 +19,29 @@ index b58f97c..99b593a 100644
  function useMenuDismiss(
    open: boolean,
    menuRef: RefObject<HTMLDivElement | null>,
-@@ -646,6 +647,12 @@ export function MainLayout() {
+@@ -616,6 +617,12 @@ export function MainLayout() {
+           metaKey: 'nav_meta.ai_providers',
+           icon: sidebarIcons.aiProviders,
+         },
++        {
++          path: '/infra',
++          label: 'Infra',
++          meta: 'Infrastructure connections',
++          icon: sidebarIcons.aiProviders,
++        },
+         {
+           path: '/auth-files',
+           labelKey: 'nav.auth_files',
+@@ -646,6 +653,18 @@ export function MainLayout() {
            metaKey: 'nav_meta.quota_management',
            icon: sidebarIcons.quota,
          },
++        {
++          path: '/performance',
++          label: 'Performance',
++          meta: 'Agent activity and GitHub contributions',
++          icon: sidebarIcons.dashboard,
++        },
 +        {
 +          path: '/quota-history',
 +          labelKey: 'nav.quota_history',
@@ -32,7 +51,7 @@ index b58f97c..99b593a 100644
          {
            path: '/logs',
            labelKey: 'nav.logs',
-@@ -1202,6 +1209,7 @@ export function MainLayout() {
+@@ -1202,6 +1221,7 @@ export function MainLayout() {
                isPluginResourcePage ? ' main-content-plugin-resource' : ''
              }`}
            >
@@ -904,21 +923,25 @@ index 9eb34ac..698c8fe 100644
    }
  }
 diff --git a/src/router/MainRoutes.tsx b/src/router/MainRoutes.tsx
-index 3867ead..92aa45a 100644
+index 3867ead..48ffff1 100644
 --- a/src/router/MainRoutes.tsx
 +++ b/src/router/MainRoutes.tsx
-@@ -6,6 +6,7 @@ import { AuthFilesOAuthExcludedEditPage } from '@/pages/AuthFilesOAuthExcludedEd
+@@ -6,6 +6,9 @@ import { AuthFilesOAuthExcludedEditPage } from '@/pages/AuthFilesOAuthExcludedEd
  import { AuthFilesOAuthModelAliasEditPage } from '@/pages/AuthFilesOAuthModelAliasEditPage';
  import { OAuthPage } from '@/features/oauth/OAuthPage';
  import { QuotaPage } from '@/features/quota/QuotaPage';
++import { PerformancePage } from '@/features/performance/PerformancePage';
++import { InfraPage } from '@/features/infra/InfraPage';
 +import { QuotaHistoryPage } from '@/features/quotaHistory/QuotaHistoryPage';
  import { PluginResourcePage } from '@/features/plugins/PluginResourcePage';
  import { PluginsPage } from '@/features/plugins/PluginsPage';
  import { PluginStorePage } from '@/features/plugins/PluginStorePage';
-@@ -28,6 +29,7 @@ const createMainRoutes = (supportsPlugin: boolean) => [
+@@ -28,6 +31,9 @@ const createMainRoutes = (supportsPlugin: boolean) => [
    { path: '/auth-files/oauth-model-alias', element: <AuthFilesOAuthModelAliasEditPage /> },
    { path: '/oauth', element: <OAuthPage /> },
    { path: '/quota', element: <QuotaPage /> },
++  { path: '/performance', element: <PerformancePage /> },
++  { path: '/infra', element: <InfraPage /> },
 +  { path: '/quota-history', element: <QuotaHistoryPage /> },
    ...(supportsPlugin
      ? [
