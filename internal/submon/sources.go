@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	log "github.com/sirupsen/logrus"
 	"io"
 	"net"
 	"net/http"
@@ -19,6 +20,7 @@ type quotaReader struct {
 func quotaClient() *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.DialContext = (&net.Dialer{KeepAlive: 30 * time.Second}).DialContext
+	transport.ExpectContinueTimeout = 0
 	transport.ResponseHeaderTimeout = 0
 	transport.TLSHandshakeTimeout = 0
 	transport.IdleConnTimeout = 0
@@ -59,7 +61,11 @@ func (r quotaReader) request(ctx context.Context, now time.Time, url, access str
 	if err != nil {
 		return nil, &missing{Status: transportFailure}
 	}
-	defer res.Body.Close()
+	defer func() {
+		if errClose := res.Body.Close(); errClose != nil {
+			log.WithField("component", "submon").Warn("Failed to close quota response body")
+		}
+	}()
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
 		st := transportFailure
 		switch res.StatusCode {
@@ -128,6 +134,6 @@ func (r quotaReader) probe(c probeContext, p provider) probe {
 		result.Outcome = missing{Status: invalidResponse}
 		return result
 	}
-	result.Outcome = reading{Identity: cred.Identity, Windows: windows}
+	result.Outcome = reading{Identity: cred.Identity, Windows: accountWindowBasis(windows, cred.Identity)}
 	return result
 }

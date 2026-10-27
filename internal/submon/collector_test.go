@@ -2,6 +2,8 @@ package submon
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -48,7 +50,7 @@ func TestWorkerIsolationCoalescingAndShutdown(t *testing.T) {
 		t.Fatal("overlapping probe")
 	}
 	info := workers.states()
-	if info["blocked"].InFlightSince == nil {
+	if info["blocked"].InFlightSince == nil || !info["blocked"].NextAt.Equal(now.Add(5*time.Minute)) {
 		t.Fatal("pending not visible")
 	}
 	cancel()
@@ -70,5 +72,98 @@ func TestBackoffAndMuseFloor(t *testing.T) {
 	next, _ := nextProbe(now, cadence(muse), 0, reading{})
 	if next.Sub(now) < 30*time.Minute {
 		t.Fatal("mint floor bypassed")
+	}
+}
+
+func TestStalledHTTPSourceDoesNotBlockPersistenceOrAPI(t *testing.T) {
+	workingProbeDone := make(chan struct{})
+	entered := make(chan struct{})
+	working := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/blocked" {
+			close(entered)
+			<-r.Context().Done()
+			return
+		}
+		_, _ = w.Write([]byte(`{}`))
+		close(working)
+	}))
+	defer server.Close()
+	s, err := openStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.close()
+	client := quotaClient()
+	defer client.CloseIdleConnections()
+	r := quotaReader{client: client}
+	sources := []source{}
+	for _, id := range []string{"blocked", "working"} {
+		sourceID := id
+		sources = append(sources, source{ID: sourceID, Provider: codex, Cadence: 5 * time.Minute, Probe: func(c probeContext) probe {
+			_, missing := r.request(c.Context, c.Now(), server.URL+"/"+sourceID, "fixture-secret", nil, false)
+			if missing != nil {
+				return probe{Outcome: *missing}
+			}
+			if sourceID == "working" {
+				close(workingProbeDone)
+			}
+			return successfulProbe(testTime(), sourceID)
+		}})
+	}
+	c := newCollector(s, sources, testTime)
+	for i := 0; i < 50; i++ {
+		c.refresh("blocked")
+	}
+	if len(c.workers["blocked"].kick) != 1 {
+		t.Fatal("refresh did not coalesce")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- c.run(ctx) }()
+	<-entered
+	<-working
+	<-workingProbeDone
+	handler := newAPI(s, c, "fixture-key", testTime, "127.0.0.1:8318")
+	w := requestAPI(handler, "GET", "/api/v1/snapshot", "", "fixture-key", "", "127.0.0.1:8318", nil)
+	if w.Code != 200 {
+		t.Fatal("UI stalled", w.Code)
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	data, err := s.load()
+	if err != nil || len(data.Accounts) != 1 {
+		t.Fatal("other source did not persist")
+	}
+}
+func TestCollectorRespectsPersistedReservationAfterRestart(t *testing.T) {
+	dir := t.TempDir()
+	s, err := openStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	next := testTime().Add(2 * time.Hour)
+	if err = s.reserve("muse-native", next, 4); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.close(); err != nil {
+		t.Fatal(err)
+	}
+	s, err = openStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.close()
+	var calls atomic.Int32
+	c := newCollector(s, []source{{ID: "muse-native", Provider: muse, Cadence: 30 * time.Minute, Probe: func(probeContext) probe { calls.Add(1); return probe{Outcome: missing{Status: unavailable}} }}}, testTime)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err = c.run(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if calls.Load() != 0 || !c.states()["muse-native"].NextAt.Equal(next) {
+		t.Fatal("restart bypassed backoff")
 	}
 }

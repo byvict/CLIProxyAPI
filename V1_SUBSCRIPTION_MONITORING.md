@@ -1,6 +1,9 @@
 # V1 subscription monitoring
 
-Status: requested scope and acceptance criteria, not implemented.
+Status: implemented by the separate `cmd/subscription-monitor` command.
+Deterministic acceptance checks and local verification are described in
+[SUBSCRIPTION_MONITOR.md](SUBSCRIPTION_MONITOR.md). Independent review and
+integration remain with the parent workflow.
 
 Victor requested subscription limits, consumption by hour and day, historical
 periods, pace, peaks, and forecasts. Project attribution and T3 integration belong

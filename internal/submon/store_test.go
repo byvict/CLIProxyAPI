@@ -117,3 +117,59 @@ func TestUnverifiedIdentityNeverGetsReadings(t *testing.T) {
 		}
 	}
 }
+
+func TestProbeStoreNeverPersistsCredentialsOrRawPayload(t *testing.T) {
+	dir := t.TempDir()
+	s, err := openStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := probe{SourceID: "muse-native", StartedAt: testTime(), At: testTime(), Outcome: parseMuse(fixture(t, "muse.json")), SideEffects: []string{"credential_exchange_requested"}}
+	if err = s.append(p, p.At.Add(30*time.Minute), 0); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.close(); err != nil {
+		t.Fatal(err)
+	}
+	files, err := filepath.Glob(filepath.Join(dir, "*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, file := range files {
+		b, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, secret := range []string{"fixture-minted-secret", "api_key", "access_token", "refresh_token", "subs_usage"} {
+			if bytes.Contains(b, []byte(secret)) {
+				t.Fatalf("raw auth material in %s", filepath.Base(file))
+			}
+		}
+	}
+}
+
+func TestNativeLogoutClosesBindingAndRetainsHistory(t *testing.T) {
+	s, err := openStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.close()
+	p := successfulProbe(testTime(), "a")
+	if err = s.append(p, p.At, 0); err != nil {
+		t.Fatal(err)
+	}
+	p.At = p.At.Add(5 * time.Minute)
+	p.StartedAt = p.At
+	p.Outcome = missing{Status: unavailable, Code: "credential_missing"}
+	if err = s.append(p, p.At, 1); err != nil {
+		t.Fatal(err)
+	}
+	data, err := s.load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap := makeSnapshot(data, nil, p.At)
+	if len(data.Samples) != 1 || snap.Accounts[0].Active || snap.Sources[0].CurrentAccountID != "" {
+		t.Fatal("logged-out account remained current")
+	}
+}

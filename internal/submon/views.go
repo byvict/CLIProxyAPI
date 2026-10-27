@@ -21,21 +21,28 @@ type windowView struct {
 	SustainablePpH *float64   `json:"sustainablePpH"`
 	ExhaustsAt     *time.Time `json:"exhaustsAt"`
 }
+type historicalWindow struct {
+	ID      string    `json:"id"`
+	Key     windowKey `json:"key"`
+	Label   string    `json:"label"`
+	Current bool      `json:"current"`
+}
 type accountView struct {
-	ID           string       `json:"id"`
-	Provider     provider     `json:"provider"`
-	Identity     identityView `json:"identity"`
-	Active       bool         `json:"active"`
-	Sources      []string     `json:"sources"`
-	Status       string       `json:"status"`
-	Message      string       `json:"message"`
-	Freshness    string       `json:"freshness"`
-	ObservedAt   *time.Time   `json:"observedAt"`
-	AgeSeconds   *float64     `json:"ageSeconds"`
-	Windows      []windowView `json:"windows"`
-	Availability availability `json:"availability"`
-	ResetCredits *int         `json:"resetCredits"`
-	ResetAction  struct {
+	HistoryWindows []historicalWindow `json:"historyWindows"`
+	ID             string             `json:"id"`
+	Provider       provider           `json:"provider"`
+	Identity       identityView       `json:"identity"`
+	Active         bool               `json:"active"`
+	Sources        []string           `json:"sources"`
+	Status         string             `json:"status"`
+	Message        string             `json:"message"`
+	Freshness      string             `json:"freshness"`
+	ObservedAt     *time.Time         `json:"observedAt"`
+	AgeSeconds     *float64           `json:"ageSeconds"`
+	Windows        []windowView       `json:"windows"`
+	Availability   availability       `json:"availability"`
+	ResetCredits   *int               `json:"resetCredits"`
+	ResetAction    struct {
 		Enabled bool   `json:"enabled"`
 		Reason  string `json:"reason"`
 	} `json:"resetAction"`
@@ -105,6 +112,13 @@ func historyFor(data storedData, account string, key windowKey) []sample {
 		old, exists := byTime[s.At.UnixNano()]
 		if !exists || old.Window.Remaining == nil {
 			byTime[s.At.UnixNano()] = s
+		}
+	}
+	for _, b := range data.Bindings {
+		if b.AccountID == account && b.To != nil {
+			if _, exists := byTime[b.To.UnixNano()]; !exists {
+				byTime[b.To.UnixNano()] = sample{At: *b.To, Window: windowReading{Key: key}}
+			}
 		}
 	}
 	out := make([]sample, 0, len(byTime))
@@ -183,6 +197,28 @@ func makeSnapshot(data storedData, states map[string]workerState, now time.Time)
 			av.Message = "Fora de sessão. Histórico preservado."
 		}
 		keys := currentWindows(data, a.ID)
+		av.HistoryWindows = []historicalWindow{}
+		historical := map[windowKey]windowReading{}
+		for _, s := range data.Samples {
+			if s.AccountID == a.ID {
+				historical[s.Window.Key] = s.Window
+			}
+		}
+		for key, w := range historical {
+			current := false
+			for _, k := range keys {
+				if k == key {
+					current = true
+				}
+			}
+			av.HistoryWindows = append(av.HistoryWindows, historicalWindow{ID: key.id(), Key: key, Label: w.Label, Current: current})
+		}
+		sort.Slice(av.HistoryWindows, func(i, j int) bool {
+			if av.HistoryWindows[i].Current != av.HistoryWindows[j].Current {
+				return av.HistoryWindows[i].Current
+			}
+			return av.HistoryWindows[i].ID < av.HistoryWindows[j].ID
+		})
 		for _, key := range keys {
 			h := historyFor(data, a.ID, key)
 			w := windowView{ID: key.id(), Freshness: "missing"}
@@ -202,7 +238,7 @@ func makeSnapshot(data storedData, states map[string]workerState, now time.Time)
 				}
 				w.AgeSeconds = &age
 				w.Freshness = "fresh"
-				if time.Duration(age*float64(time.Second)) > 2*cadence(a.Provider) || av.Status != string(ok) || h[len(h)-1].Window.Remaining == nil {
+				if (w.ResetsAt != nil && !w.ResetsAt.After(now)) || time.Duration(age*float64(time.Second)) > 2*cadence(a.Provider) || av.Status != string(ok) || h[len(h)-1].Window.Remaining == nil {
 					w.Freshness = "stale"
 				}
 			} else {
@@ -417,7 +453,7 @@ func makeView(data storedData, states map[string]workerState, now time.Time, sel
 			if !a.Active || freshness != "fresh" {
 				result.Forecast = []forecastPoint{}
 				result.ExhaustsAt = nil
-				result.Insufficient = "Conta fora de sessão ou leitura desatualizada. Projeção suspensa."
+				result.Insufficient = "Conta ou janela fora da leitura atual, ou dado desatualizado. Projeção suspensa."
 			}
 			g.Accounts = append(g.Accounts, accountAnalysis{WindowID: key.id(), AccountID: a.ID, Label: a.Identity.Label, Freshness: freshness, analysis: result})
 		}

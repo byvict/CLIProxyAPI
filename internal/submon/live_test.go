@@ -50,6 +50,17 @@ func TestNativeLive(t *testing.T) {
 				if a.SourceID == src.ID {
 					r.Status = a.Status
 					r.Code = a.Code
+					r.Windows = 0
+					for _, reading := range data.Samples {
+						if reading.AttemptID == a.ID {
+							r.Windows++
+						}
+					}
+					for _, account := range data.Accounts {
+						if account.ID == a.AccountID {
+							r.Basis = account.Basis
+						}
+					}
 				}
 			}
 			receipts = append(receipts, r)

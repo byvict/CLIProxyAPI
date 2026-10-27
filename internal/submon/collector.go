@@ -119,6 +119,7 @@ func (c *collector) runWorker(ctx context.Context, w *sourceWorker) error {
 			continue
 		}
 		w.state.InFlightSince = &now
+		w.state.NextAt = now.Add(w.source.Cadence)
 		failures := w.state.Failures
 		w.mu.Unlock()
 		if err := c.store.reserve(w.source.ID, now.Add(w.source.Cadence), failures); err != nil {

@@ -91,3 +91,98 @@ func TestRateDoesNotBorrowPreviousCycle(t *testing.T) {
 		t.Fatal("previous cycle polluted current rate", a.RecentPpH)
 	}
 }
+
+func TestHistoryCannotCrossInactiveSourceBinding(t *testing.T) {
+	s, err := openStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.close()
+	first := successfulProbe(testTime(), "a")
+	middle := successfulProbe(testTime().Add(5*time.Minute), "b")
+	last := successfulProbe(testTime().Add(10*time.Minute), "a")
+	reset := testTime().Add(48 * time.Hour)
+	for _, p := range []*probe{&first, &middle, &last} {
+		r := p.Outcome.(reading)
+		r.Windows[0].ResetsAt = &reset
+		p.Outcome = r
+	}
+	for _, p := range []probe{first, middle, last} {
+		if err = s.append(p, p.At, 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	data, err := s.load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := first.Outcome.(reading)
+	h := historyFor(data, r.Identity.accountID(), r.Windows[0].Key)
+	a := analyze(h, analysisOptions{Now: last.At, Cadence: 5 * time.Minute, Period: 24 * time.Hour, Lookback: time.Hour})
+	if len(a.Intervals) != 0 {
+		t.Fatal("delta crossed signed-out interval")
+	}
+}
+
+func TestHistoricalWindowRemainsSelectableAfterCapacityChange(t *testing.T) {
+	s, err := openStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.close()
+	p := successfulProbe(testTime(), "a")
+	r := p.Outcome.(reading)
+	old := r.Windows[0].Key
+	if err = s.append(p, p.At, 0); err != nil {
+		t.Fatal(err)
+	}
+	p.At = p.At.Add(5 * time.Minute)
+	p.StartedAt = p.At
+	r.Windows[0].Key.CapacityBasis = "new-plan"
+	p.Outcome = r
+	if err = s.append(p, p.At, 0); err != nil {
+		t.Fatal(err)
+	}
+	data, err := s.load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap := makeSnapshot(data, nil, p.At)
+	if len(snap.Accounts[0].HistoryWindows) != 2 || len(snap.Accounts[0].Windows) != 1 {
+		t.Fatal("historical window lost")
+	}
+	v, err := makeView(data, nil, p.At, viewSelection{Provider: "codex", Account: r.Identity.accountID(), Window: old.id(), Period: 24 * time.Hour, Lookback: time.Hour, Horizon: 24 * time.Hour})
+	if err != nil || len(v.Groups) != 1 || len(v.Groups[0].Accounts[0].Observed) == 0 {
+		t.Fatal("historical window inaccessible")
+	}
+}
+
+func TestUsageCheckedAtUsesOldestContributingObservation(t *testing.T) {
+	s, err := openStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.close()
+	first := successfulProbe(testTime(), "codex-person")
+	second := successfulProbe(testTime().Add(time.Minute), "grok-person")
+	second.SourceID = "grok-native"
+	r := second.Outcome.(reading)
+	r.Identity.Provider = grok
+	second.Outcome = r
+	for _, p := range []probe{first, second} {
+		if err = s.append(p, p.At, 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	data, err := s.load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	report := usageSnapshot(makeSnapshot(data, nil, second.At), second.At)
+	if !report.CheckedAt.Equal(first.At) {
+		t.Fatal("shared timestamp hid older provider observation")
+	}
+	if !report.Providers[2].CheckedAt.Equal(second.At) {
+		t.Fatal("provider timestamp lost")
+	}
+}

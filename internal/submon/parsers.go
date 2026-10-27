@@ -145,7 +145,8 @@ func parseMuse(b []byte) probeOutcome {
 	if err != nil {
 		return missing{Status: unavailable, Code: "dormant"}
 	}
-	return reading{Identity: identity{Provider: muse, Basis: providerEmail, Subject: email, Email: email}, Windows: w}
+	i := identity{Provider: muse, Basis: providerEmail, Subject: email, Email: email}
+	return reading{Identity: i, Windows: accountWindowBasis(w, i)}
 }
 func remaining(used *float64) (*float64, error) {
 	if used == nil {
@@ -182,7 +183,10 @@ func parseWindows(p provider, b []byte) ([]windowReading, error) {
 		if err != nil {
 			return err
 		}
-		if seconds < 0 || (seconds == 0 && kind != "monthly") || scope == "" {
+		if seconds < 0 || seconds > int64((1<<63-1)/int64(time.Second)) || (seconds == 0 && kind != "monthly") || scope == "" {
+			return errShape
+		}
+		if reset != nil && (reset.Year() < 1 || reset.Year() > 9999) {
 			return errShape
 		}
 		w := windowReading{Key: windowKey{Kind: kind, Scope: scope, PeriodSeconds: seconds, Unit: "percent", CapacityBasis: basis}, Label: label, Capacity: 100, Remaining: r, ResetsAt: reset}
@@ -252,6 +256,7 @@ func parseWindows(p provider, b []byte) ([]windowReading, error) {
 			if kind == "" {
 				kind = l.Group
 			}
+			scoped := kind == "weekly_scoped"
 			seconds := int64(604800)
 			label := "semanal"
 			scope := "all"
@@ -278,7 +283,7 @@ func parseWindows(p provider, b []byte) ([]windowReading, error) {
 				}
 				label += " " + name
 			}
-			if l.Kind == "weekly_scoped" && scope == "all" {
+			if scoped && scope == "all" {
 				return nil, errShape
 			}
 			if err := add(kind, scope, label, "native-subscription", seconds, l.Percent, l.Reset); err != nil {
@@ -338,4 +343,14 @@ func parseWindows(p provider, b []byte) ([]windowReading, error) {
 		return nil, errShape
 	}
 	return out, nil
+}
+
+func accountWindowBasis(windows []windowReading, i identity) []windowReading {
+	for j := range windows {
+		switch windows[j].Key.CapacityBasis {
+		case "unknown-plan", "native-subscription", "native-credits":
+			windows[j].Key.CapacityBasis = "account-percent:" + i.accountID()
+		}
+	}
+	return windows
 }

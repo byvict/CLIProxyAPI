@@ -136,7 +136,7 @@ func analyze(input []sample, o analysisOptions) analysis {
 		}
 		prev := samples[i-1]
 		if !continuous(prev, s, maxGap) {
-			if prev.Window.Remaining != nil && prev.Window.ResetsAt != nil && !prev.Window.ResetsAt.After(s.At) && !sameReset(prev.Window.ResetsAt, s.Window.ResetsAt) && s.Window.ResetsAt != nil && s.Window.ResetsAt.After(s.At) {
+			if prev.Window.Remaining != nil && prev.Window.ResetsAt != nil && !prev.Window.ResetsAt.Before(start) && !prev.Window.ResetsAt.After(s.At) && !sameReset(prev.Window.ResetsAt, s.Window.ResetsAt) && s.Window.ResetsAt != nil && s.Window.ResetsAt.After(s.At) {
 				a.UnusedCycles = append(a.UnusedCycles, unusedCycle{ResetAt: *prev.Window.ResetsAt, LastObservedAt: prev.At, UpperBoundPp: *prev.Window.Remaining})
 			}
 			continue
@@ -181,12 +181,13 @@ func analyze(input []sample, o analysisOptions) analysis {
 	count := 0
 	consumed := 0.0
 	for _, d := range a.Intervals {
-		if d.From.Before(lookbackStart) {
+		duration := overlap(d.From, d.To, lookbackStart, o.Now)
+		if duration <= 0 {
 			continue
 		}
 		count++
-		consumed += d.ConsumedPp
-		a.RateCoverage.ObservedSeconds += d.To.Sub(d.From).Seconds()
+		consumed += d.ConsumedPp * float64(duration) / float64(d.To.Sub(d.From))
+		a.RateCoverage.ObservedSeconds += duration.Seconds()
 	}
 	a.RateCoverage.Fraction = fraction(a.RateCoverage.ObservedSeconds, a.RateCoverage.RequestedSeconds)
 	a.RateCoverage.Complete = a.RateCoverage.Fraction >= 1-1e-9
@@ -196,34 +197,39 @@ func analyze(input []sample, o analysisOptions) analysis {
 		v := *w.Remaining / w.ResetsAt.Sub(o.Now).Hours()
 		a.SustainablePpH = &v
 	}
-	if count < 2 || a.RateCoverage.ObservedSeconds < (2*o.Cadence).Seconds() {
+	if count < 2 || a.RateCoverage.ObservedSeconds < o.Cadence.Seconds() {
 		return a
 	}
 	rate := consumed / (a.RateCoverage.ObservedSeconds / 3600)
 	a.RecentPpH = &rate
+	if w.ResetsAt != nil && !w.ResetsAt.After(o.Now) {
+		a.Insufficient = "O reset informado já passou. Aguarde uma leitura do novo ciclo."
+		return a
+	}
 	if w.Remaining == nil || o.Now.Sub(last.At) > maxGap {
 		a.Insufficient = "Leitura desatualizada ou ausente. Projeção suspensa."
 		return a
 	}
-	continuousSeconds := time.Duration(0)
-	for i := len(samples) - 1; i > 0; i-- {
-		if !continuous(samples[i-1], samples[i], maxGap) {
-			break
-		}
-		continuousSeconds += samples[i].At.Sub(samples[i-1].At)
-	}
-	if continuousSeconds < 2*o.Cadence {
+	if last.At.Sub(cycleStart) < 2*o.Cadence {
 		a.RecentPpH = nil
 		return a
 	}
 	a.Insufficient = ""
+	projected := math.Max(0, *w.Remaining-rate*o.Now.Sub(last.At).Hours())
 	if rate > 0 {
-		exhausts := o.Now.Add(time.Duration(*w.Remaining / rate * float64(time.Hour)))
-		if w.ResetsAt == nil || exhausts.Before(*w.ResetsAt) {
+		hours := projected / rate
+		maxHours := (14 * 24 * time.Hour).Hours()
+		if o.Horizon > 0 {
+			maxHours = o.Horizon.Hours()
+		}
+		beforeReset := w.ResetsAt == nil || hours < w.ResetsAt.Sub(o.Now).Hours()
+		if hours <= maxHours && beforeReset {
+			exhausts := o.Now.Add(time.Duration(hours * float64(time.Hour)))
 			a.ExhaustsAt = &exhausts
 		}
 	}
 	if o.Horizon > 0 {
+		w.Remaining = &projected
 		a.Forecast = forecast(w, o, rate)
 	}
 	return a
@@ -302,10 +308,14 @@ func heatmap(hourly []consumptionBin) []heatCell {
 }
 func rollingRates(intervals []deltaInterval) []ratePoint {
 	out := []ratePoint{}
-	for _, last := range intervals {
+	left := 0
+	for i, last := range intervals {
 		from := last.To.Add(-time.Hour)
+		for left < i && !intervals[left].To.After(from) {
+			left++
+		}
 		consumed, seconds := 0.0, 0.0
-		for _, d := range intervals {
+		for _, d := range intervals[left : i+1] {
 			over := overlap(from, last.To, d.From, d.To)
 			if over > 0 {
 				seconds += over.Seconds()

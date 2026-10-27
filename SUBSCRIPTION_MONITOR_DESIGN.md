@@ -206,3 +206,19 @@ The original build and full suite passed with an isolated Go 1.27.3 toolchain
 before implementation. Source Go compatibility remains 1.26.10. Keep V1 runtime,
 database, logs, evidence, and sockets on the SSD outside Git. No T3 settings,
 native credential stores, or original installation files are modified by V1.
+
+## Implementation notes
+
+The implementation follows this contract in `internal/submon`. Read
+[SUBSCRIPTION_MONITOR.md](SUBSCRIPTION_MONITOR.md) for operational commands and
+the rerunnable verification scripts. Historical window metadata remains
+selectable after a plan or window change. A passed reset requires a new
+observation before projecting the next cycle.
+
+When a provider does not report a plan or comparable capacity basis, its
+normalized windows stay separate per account. This avoids treating unknown
+plans as compatible. Claude can report a model display name with a null model
+ID. That name becomes an explicitly labeled provider scope, not an account
+identity. The native environment token and the Keychain login can differ.
+The monitor honors the active token source and reports `identity_unverified`
+when that token cannot fetch its profile.

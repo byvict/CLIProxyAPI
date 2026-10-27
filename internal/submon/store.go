@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"time"
 
+	log "github.com/sirupsen/logrus"
 	_ "modernc.org/sqlite"
 )
 
@@ -118,7 +119,7 @@ func (s *store) migrate() error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer rollback(tx)
 	_, err = tx.Exec(`
  CREATE TABLE accounts(id TEXT PRIMARY KEY,provider TEXT NOT NULL,basis TEXT NOT NULL,label TEXT NOT NULL,email TEXT NOT NULL);
  CREATE TABLE source_bindings(source_id TEXT NOT NULL,account_id TEXT NOT NULL REFERENCES accounts(id),from_ns INTEGER NOT NULL,to_ns INTEGER,PRIMARY KEY(source_id,from_ns));
@@ -149,7 +150,7 @@ func (s *store) append(p probe, next time.Time, failures int) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer rollback(tx)
 	id := attemptID(p)
 	var exists int
 	if err = tx.QueryRow("SELECT count(*) FROM attempts WHERE id=?", id).Scan(&exists); err != nil {
@@ -176,7 +177,7 @@ func (s *store) append(p probe, next time.Time, failures int) error {
 		}
 	case missing:
 		st, code = result.Status, result.Code
-		if st == identityUnverified {
+		if st == identityUnverified || code == "credential_missing" || code == "api_key" || code == "unsupported_source" {
 			if _, err = tx.Exec("UPDATE source_bindings SET to_ns=? WHERE source_id=? AND to_ns IS NULL", p.At.UnixNano(), p.SourceID); err != nil {
 				return err
 			}
@@ -206,7 +207,7 @@ func (s *store) load() (storedData, error) {
 	if err != nil {
 		return data, err
 	}
-	defer tx.Rollback()
+	defer rollback(tx)
 	queries := []struct {
 		sql  string
 		read func(*sql.Rows) error
@@ -291,4 +292,10 @@ func (s *store) load() (storedData, error) {
 		}
 	}
 	return data, tx.Commit()
+}
+
+func rollback(tx *sql.Tx) {
+	if err := tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
+		log.WithField("component", "submon").Error("Failed to roll back quota persistence transaction")
+	}
 }

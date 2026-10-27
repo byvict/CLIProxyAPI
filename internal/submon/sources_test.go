@@ -121,7 +121,7 @@ func TestClaudeProfileAndUsageUseOneCredentialSnapshot(t *testing.T) {
 func TestQuotaTransportAndSanitizedErrors(t *testing.T) {
 	c := quotaClient()
 	tr := c.Transport.(*http.Transport)
-	if c.Timeout != 0 || tr.ResponseHeaderTimeout != 0 || tr.TLSHandshakeTimeout != 0 || tr.IdleConnTimeout != 0 {
+	if c.Timeout != 0 || tr.ExpectContinueTimeout != 0 || tr.ResponseHeaderTimeout != 0 || tr.TLSHandshakeTimeout != 0 || tr.IdleConnTimeout != 0 {
 		t.Fatal("quota timeout")
 	}
 	r := quotaReader{client: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
@@ -175,5 +175,46 @@ func TestClaudeModelScopeWithProviderDisplayName(t *testing.T) {
 	windows, err := parseWindows(claude, []byte(`{"limits":[{"kind":"weekly_scoped","scope":{"model":{"id":null,"display_name":"Fable"}},"percent":33,"resets_at":null}]}`))
 	if err != nil || len(windows) != 1 || windows[0].Key.Scope != "provider-label:Fable" {
 		t.Fatalf("provider label scope rejected %v %+v", err, windows)
+	}
+}
+
+func TestNativeTokenRotationPreservesAccountIdentity(t *testing.T) {
+	for _, p := range []provider{codex, grok} {
+		original := fixture(t, string(p)+"-auth.json")
+		rotated := bytes.ReplaceAll(original, []byte("fixture-secret"), []byte("fixture-rotated-secret"))
+		first, err := parseCredential(p, original)
+		if err != nil {
+			t.Fatal(err)
+		}
+		second, err := parseCredential(p, rotated)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if first.Access == second.Access || first.Identity.accountID() != second.Identity.accountID() {
+			t.Fatal("rotation split history")
+		}
+	}
+	first := parseMuse(fixture(t, "muse.json")).(reading)
+	rotated := parseMuse(bytes.ReplaceAll(fixture(t, "muse.json"), []byte("fixture-minted-secret"), []byte("fixture-rotated-secret"))).(reading)
+	if first.Identity.accountID() != rotated.Identity.accountID() {
+		t.Fatal("minted key rotation split Muse history")
+	}
+	switched := parseMuse(bytes.ReplaceAll(fixture(t, "muse.json"), []byte("Fixture-Muse@Example.test"), []byte("other@example.test"))).(reading)
+	if first.Identity.accountID() == switched.Identity.accountID() {
+		t.Fatal("Muse email change merged histories")
+	}
+}
+
+func TestProviderWindowDurationsAndResetTimesMustBeRepresentable(t *testing.T) {
+	for _, payload := range []string{`{"rate_limit":{"primary_window":{"limit_window_seconds":9223372036854775807,"used_percent":0}}}`, `{"rate_limit":{"primary_window":{"limit_window_seconds":604800,"used_percent":0,"reset_at":253402300800}}}`} {
+		if _, err := parseWindows(codex, []byte(payload)); err == nil {
+			t.Fatal("unrepresentable provider time accepted")
+		}
+	}
+}
+
+func TestClaudeScopedGroupCannotLoseItsModel(t *testing.T) {
+	if _, err := parseWindows(claude, []byte(`{"limits":[{"group":"weekly_scoped","percent":20,"scope":null}]}`)); err == nil {
+		t.Fatal("model-specific group became an all-model window")
 	}
 }
