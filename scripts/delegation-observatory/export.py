@@ -389,7 +389,7 @@ def validate_shape(envelope):
             if value is None:
                 continue
             if not isinstance(value, dict):
-                raise ValueError("Invalid usage counters")
+                raise TypeError("Invalid usage counters")
             if key not in ["scope_counts", "usage_status_counts"]:
                 closed(
                     value,

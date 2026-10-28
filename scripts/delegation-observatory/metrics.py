@@ -168,7 +168,7 @@ def summarize(dispatches, contributions, panels, coverage):
             applied_contributions=applied,
             application_unknown_contributions=sum(
                 c.get("applied") is None
-                and (not (c["kind"] == "verification_artifact"))
+                and c["kind"] != "verification_artifact"
                 for c in cs
             ),
             application_not_applicable_contributions=sum(
