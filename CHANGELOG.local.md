@@ -1,5 +1,12 @@
 # Local releases
 
+## 8.0.44-local.10
+
+- Load activity without ordering token events, reuse recent results while navigating, and request GitHub activity on demand.
+- Display quota balances per account before optional metadata, share concurrent reads, and preserve balances during refresh.
+- Preserve history selections, cancel obsolete reads, and recover collection after failed resets.
+- Bound history reads by period and align sample validity with the 30-minute collector using 45-minute and 65-minute limits.
+
 ## 8.0.44-local.9
 
 - Separate inspected dispatches, evaluable utilization and unread work in the delegation dashboard without changing rate denominators.
