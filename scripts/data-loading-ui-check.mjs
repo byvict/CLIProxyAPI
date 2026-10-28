@@ -141,7 +141,7 @@ try {
   await page.getByText('@new-account', { exact: true }).waitFor();
   releaseGitHub();
   await navigate('/performance'); await page.getByRole('button', { name: 'GitHub', exact: true }).click();
-  await page.getByText(/@new-account/).waitFor();
+  await page.getByText('@new-account · Atividade da conta inteira, sem atribuição por provedor.', { exact: true }).waitFor();
   assert.equal(await page.getByText(/@old-account/).count(), 0);
   checks.push('A pending GitHub GET cannot overwrite the account returned after saving a token.');
 
