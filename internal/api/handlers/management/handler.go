@@ -4,7 +4,11 @@ package management
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/binary"
 	"fmt"
 	"net/http"
 	"os"
@@ -36,11 +40,18 @@ const attemptCleanupInterval = 1 * time.Hour
 // attemptMaxIdleTime controls how long an IP can be idle before cleanup
 const attemptMaxIdleTime = 2 * time.Hour
 
+type verifiedManagementKey struct {
+	fingerprint [sha256.Size]byte
+	valid       bool
+}
+
 // Handler aggregates config reference, persistence path and helpers.
 type Handler struct {
 	cfg                     *config.Config
 	configFilePath          string
 	mu                      sync.Mutex
+	managementMemoKey       [sha256.Size]byte
+	verifiedManagementKey   verifiedManagementKey
 	authStatusMu            sync.Mutex
 	reloadMu                sync.Mutex
 	reloadGeneration        uint64
@@ -84,6 +95,7 @@ func NewHandler(cfg *config.Config, configFilePath string, manager *coreauth.Man
 		allowRemoteOverride: envSecret != "",
 		envSecret:           envSecret,
 	}
+	rand.Read(h.managementMemoKey[:])
 	h.startAttemptCleanup()
 	return h
 }
@@ -365,6 +377,8 @@ func (h *Handler) AuthenticateManagementKey(clientIP string, localClient bool, p
 
 	h.mu.Lock()
 	cfg := h.cfg
+	memoKey := h.managementMemoKey
+	verified := h.verifiedManagementKey
 	var (
 		allowRemote bool
 		secretHash  string
@@ -446,14 +460,35 @@ func (h *Handler) AuthenticateManagementKey(clientIP string, localClient bool, p
 		return true, 0, ""
 	}
 
-	if secretHash == "" || bcrypt.CompareHashAndPassword([]byte(secretHash), []byte(provided)) != nil {
+	fingerprint := managementKeyFingerprint(memoKey, secretHash, provided)
+	memoEnabled := memoKey != [sha256.Size]byte{}
+	memoHit := subtle.ConstantTimeCompare(fingerprint[:], verified.fingerprint[:]) == 1 && verified.valid && memoEnabled
+	if secretHash == "" || (!memoHit && bcrypt.CompareHashAndPassword([]byte(secretHash), []byte(provided)) != nil) {
 		fail()
 		return false, http.StatusUnauthorized, "invalid management key"
 	}
 
+	if memoEnabled && !memoHit {
+		h.mu.Lock()
+		if h.cfg != nil && h.cfg.RemoteManagement.SecretKey == secretHash {
+			h.verifiedManagementKey = verifiedManagementKey{fingerprint: fingerprint, valid: true}
+		}
+		h.mu.Unlock()
+	}
 	reset()
 
 	return true, 0, ""
+}
+
+func managementKeyFingerprint(key [sha256.Size]byte, secretHash, provided string) [sha256.Size]byte {
+	mac := hmac.New(sha256.New, key[:])
+	mac.Write([]byte("cpa-management-key-v1"))
+	mac.Write(binary.BigEndian.AppendUint64(nil, uint64(len(secretHash))))
+	mac.Write([]byte(secretHash))
+	mac.Write([]byte(provided))
+	var fingerprint [sha256.Size]byte
+	mac.Sum(fingerprint[:0])
+	return fingerprint
 }
 
 // persistLocked saves the current in-memory config to disk.

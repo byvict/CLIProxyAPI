@@ -2487,3 +2487,171 @@ diff --git a/src/features/quota/quotaTimelineModel.ts b/src/features/quota/quota
    const empty: TimelineLane = {
      name,
      displayName,
+diff --git a/src/features/quota/components/QuotaTimeline.tsx b/src/features/quota/components/QuotaTimeline.tsx
+--- a/src/features/quota/components/QuotaTimeline.tsx
++++ b/src/features/quota/components/QuotaTimeline.tsx
+@@ -27,13 +27,13 @@
+ import { useQuotaHistory } from '@/features/quotaHistory/useQuotaHistory';
+ import { ProjectionSummary } from '@/features/quotaHistory/ProjectionSummary';
+ import { ExhaustionMarker } from '@/features/quotaHistory/ExhaustionMarker';
++import { historyTimelineLane } from '@/features/quotaHistory/timelineHistory';
+ import { quotaProjection } from '@/features/quotaHistory/projection';
+ import type { QuotaProjection } from '@/features/quotaHistory/projection';
+ import { normalizeAuthIndex } from '@/utils/authIndex';
+ import historyStyles from '@/features/quotaHistory/QuotaHistory.module.scss';
+ import type { ResolvedTheme, ThemeColors } from '@/types';
+ import {
+-  buildTimelineLane,
+   laneHasWindow,
+   projectLane,
+   projectResetCredits,
+@@ -105,61 +105,78 @@
+
+   const laneInputs = useMemo(
+     () =>
+-      entries.map((entry) => ({
+-        name: getQuotaCacheKey(entry.file),
+-        displayName:
+-          entry.type === 'devin'
+-            ? getQuotaDisplayName(entry.file)
+-            : displayNameFor(entry.file.name),
+-        provider: entry.type,
+-        quota: quotaFor(entry),
+-      })),
++      entries
++        .filter((entry) => !entry.file.disabled)
++        .map((entry) => ({
++          name: getQuotaCacheKey(entry.file),
++          credential: normalizeAuthIndex(entry.file.authIndex),
++          displayName:
++            entry.type === 'devin'
++              ? getQuotaDisplayName(entry.file)
++              : displayNameFor(entry.file.name),
++          provider: entry.type,
++          quota: quotaFor(entry),
++        })),
+     [entries, quotaFor, displayNameFor]
+   );
+
+-  // Keep the timeline hidden until at least one loaded credential exposes a
+-  // real quota window. Once there is timeline data, however, changing zoom must
++  // Keep the timeline hidden until a current credential has a live or recorded
++  // quota window. Once there is timeline data, however, changing zoom must
+   // never remove the whole panel just because that mode has no matching lanes.
+   const hasAnyLane = useMemo(
+-    () => laneInputs.some((input) => laneHasWindow(buildTimelineLane(input))),
+-    [laneInputs]
++    () =>
++      laneInputs.some((input) =>
++        laneHasWindow(historyTimelineLane(input, input.credential, observations, now))
++      ),
++    [laneInputs, observations, now]
+   );
+
+   const lanes = useMemo(
+     () =>
+       laneInputs
+         .map((input) =>
+-          buildTimelineLane({
+-            ...input,
+-            // Weekly mode prefers the longest readable window. Session mode
+-            // asks specifically for a real 5-hour window; longer periods must
+-            // not be reinterpreted as 5-hour resets.
+-            maxPeriodHours: mode === 'session' ? 5 : span.days * 24,
+-          })
++          historyTimelineLane(
++            {
++              ...input,
++              // Weekly mode prefers the longest readable window. Session mode
++              // asks specifically for a real 5-hour window; longer periods must
++              // not be reinterpreted as 5-hour resets.
++              maxPeriodHours: mode === 'session' ? 5 : span.days * 24,
++            },
++            input.credential,
++            observations,
++            now
++          )
+         )
+         .filter((lane) => laneHasWindow(lane) && (mode !== 'session' || lane.periodHours === 5)),
+-    [laneInputs, mode, span.days]
++    [laneInputs, mode, span.days, observations, now]
+   );
+
+   const weeklyBalances = useMemo(
+     () =>
+       new Map(
+         laneInputs.map((input) => {
+-          const weekly = buildTimelineLane({ ...input, maxPeriodHours: 7 * 24 });
++          const weekly = historyTimelineLane(
++            { ...input, maxPeriodHours: 7 * 24 },
++            input.credential,
++            observations,
++            now
++          );
+           return [input.name, weekly.periodHours === 7 * 24 ? weekly.remaining : null];
+         })
+       ),
+-    [laneInputs]
++    [laneInputs, observations, now]
+   );
+
+   const projections = useMemo(() => {
+     const byCredential = new Map<string, Map<string, typeof observations>>();
+     for (const sample of observations) {
+-      const windows = byCredential.get(sample.credential) ?? new Map();
++      if (sample.observedAtMs > now) continue;
++      const windows = byCredential.get(normalizeAuthIndex(sample.credential) ?? '') ?? new Map();
+       const samples = windows.get(sample.windowId) ?? [];
+       samples.push(sample);
+       windows.set(sample.windowId, samples);
+-      byCredential.set(sample.credential, windows);
++      byCredential.set(normalizeAuthIndex(sample.credential) ?? '', windows);
+     }
+     const identities = new Map(
+       entries.map((entry) => [
+@@ -169,10 +186,14 @@
+     );
+     return new Map(
+       lanes.map((lane) => {
+-        const samples =
+-          byCredential.get(identities.get(lane.name) ?? '')?.get(lane.windowId ?? '') ?? [];
++        const samples = (
++          byCredential.get(identities.get(lane.name) ?? '')?.get(lane.windowId ?? '') ?? []
++        )
++          .filter((sample) => sample.provider === lane.provider)
++          .sort((a, b) => a.observedAtMs - b.observedAtMs);
+         const latest = samples[samples.length - 1];
+         const matchesReset =
++          latest?.periodHours === lane.periodHours &&
+           latest?.resetAtMs !== null &&
+           lane.anchorMs !== null &&
+           Math.abs((latest?.resetAtMs ?? 0) - lane.anchorMs) <= 60_000;
+@@ -415,6 +436,17 @@
+             {providerLabel} <span className={styles.laneQuota}>({weeklyPercent})</span>
+           </span>
+         </div>
++        {lane.recordedAtMs !== undefined && (
++          <time
++            className={historyStyles.projectionStatus}
++            dateTime={new Date(lane.recordedAtMs).toISOString()}
++          >
++            {t('quota_history.recorded_reading', {
++              defaultValue: 'Recorded reading · {{time}}',
++              time: new Date(lane.recordedAtMs).toLocaleString(i18n.resolvedLanguage),
++            })}
++          </time>
++        )}
+         <ProjectionSummary projection={projection} now={now} />
+       </div>
+
+diff --git a/src/features/quota/quotaTimelineModel.ts b/src/features/quota/quotaTimelineModel.ts
+--- a/src/features/quota/quotaTimelineModel.ts
++++ b/src/features/quota/quotaTimelineModel.ts
+@@ -51,6 +51,7 @@
+   displayName: string;
+   provider: QuotaProviderType;
+   windowId?: string | null;
++  recordedAtMs?: number;
+   /** Instant a window boundary falls on; all other boundaries derive from it. */
+   anchorMs: number | null;
+   /** Window length in hours. */
