@@ -379,6 +379,37 @@ class PipelineTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "revision regressed"):
             pipeline.choose_dispatches([original, regressed, advanced])
 
+    def test_cli_import_preserves_sol_and_terra_auditor_provenance(self):
+        bundle = self.base / "model-judgments"
+        bundle.mkdir()
+        self.audit(bundle)
+        for model in ("gpt-6.1-sol", "gpt-6.1-terra"):
+            with self.subTest(model=model):
+                result = subprocess.run(
+                    [
+                        sys.executable,
+                        str(Path(pipeline.__file__)),
+                        "--data-dir",
+                        str(self.root),
+                        "import-judgments",
+                        "--from-dir",
+                        str(bundle),
+                        "--owner",
+                        "actual-auditor",
+                        "--auditor-model",
+                        model,
+                    ],
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                ident = json.loads(result.stdout)["judgment_bundle"]
+                manifest = load(self.root / "judgments" / ident / "manifest.json")
+                self.assertEqual(manifest["auditor_model"], model)
+                self.assertEqual(manifest["owner"], "actual-auditor")
+                audits = pipeline.build(self.root)["disposition_snapshots"]
+                self.assertTrue(any(row.get("auditor_model") == model for row in audits))
+
     def test_judgment_revision_preserves_cause_identity(self):
         bundle = self.base / "judgments"
         bundle.mkdir()
