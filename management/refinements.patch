@@ -2505,7 +2505,7 @@ diff --git a/src/features/quota/components/QuotaTimeline.tsx b/src/features/quot
    laneHasWindow,
    projectLane,
    projectResetCredits,
-@@ -105,61 +105,78 @@
+@@ -105,61 +105,75 @@
 
    const laneInputs = useMemo(
      () =>
@@ -2535,9 +2535,7 @@ diff --git a/src/features/quota/components/QuotaTimeline.tsx b/src/features/quot
 
 -  // Keep the timeline hidden until at least one loaded credential exposes a
 -  // real quota window. Once there is timeline data, however, changing zoom must
-+  // Keep the timeline hidden until a current credential has a live or recorded
-+  // quota window. Once there is timeline data, however, changing zoom must
-   // never remove the whole panel just because that mode has no matching lanes.
+-  // never remove the whole panel just because that mode has no matching lanes.
    const hasAnyLane = useMemo(
 -    () => laneInputs.some((input) => laneHasWindow(buildTimelineLane(input))),
 -    [laneInputs]

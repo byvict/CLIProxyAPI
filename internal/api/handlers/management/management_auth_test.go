@@ -189,7 +189,6 @@ func TestManagementAuthMemoConcurrent(t *testing.T) {
 	assertManagementAuth(t, h, "final", true, "bravo", 0)
 }
 
-// The baseline clears only the success slot, reproducing per-request bcrypt without changing policy.
 func BenchmarkManagementAuthHTTP(b *testing.B) {
 	hash := authHash(b, "synthetic-http-password", bcrypt.DefaultCost)
 	for _, mode := range []string{"Baseline", "Warm", "Cold"} {
