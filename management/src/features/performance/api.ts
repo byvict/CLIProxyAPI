@@ -152,8 +152,11 @@ const responses = new Map<string, ActivityEntry>();
 const listeners = new Set<() => void>();
 let scope = '';
 const emit = () => listeners.forEach((listener) => listener());
+function currentSession() {
+  return [apiClient.getConnectionRevision(), useQuotaStore.getState().cacheGeneration].join(':');
+}
 function currentScope() {
-  return [apiClient.getConnectionRevision(), useQuotaStore.getState().cacheGeneration,
+  return [currentSession(),
     new Intl.DateTimeFormat('en', { year: 'numeric', timeZone: 'America/Sao_Paulo' }).format(Date.now())].join(':');
 }
 function entries() {
@@ -186,6 +189,7 @@ async function readActivity(path: string, parse: (value: unknown) => unknown, fo
   };
   cache.set(path, entry);
   const capturedScope = scope;
+  const capturedSession = currentSession();
   const current = () => capturedScope === currentScope() && responses.get(path) === entry;
   const client = apiClient.captureConnection();
   entry.pending = (async () => {
@@ -206,6 +210,9 @@ async function readActivity(path: string, parse: (value: unknown) => unknown, fo
     } finally {
       entry.pending = undefined;
       if (current()) emit();
+      else if (capturedSession === currentSession() && capturedScope !== currentScope()) {
+        void readActivity(path, parse, false);
+      }
     }
   })();
   emit();

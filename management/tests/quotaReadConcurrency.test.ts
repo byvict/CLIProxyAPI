@@ -17,7 +17,7 @@ function deferred() {
 }
 const mocks: Array<{ mockRestore(): void }> = [];
 afterEach(() => { mocks.splice(0).forEach((mock) => mock.mockRestore()); useQuotaStore.getState().clearQuotaCache(); });
-function setup() {
+function setup(resetResult: Promise<unknown> = Promise.resolve(success)) {
   const read = deferred();
   let reads = 0, resets = 0;
   const post = spyOn(apiClient, 'post').mockResolvedValue({});
@@ -26,7 +26,7 @@ function setup() {
   const adapter = withQuotaHistory({
     type: 'codex', i18nPrefix: 'codex_quota', filterFn: () => true,
     fetchQuota: async () => { reads++; return read.promise; },
-    resetQuota: async () => { resets++; return success; },
+    resetQuota: async () => { resets++; return resetResult; },
     storeSelector: (state) => state.codexQuota, storeSetter: 'setCodexQuota',
     buildLoadingState: () => ({ status: 'loading' }),
     buildErrorState: (error) => ({ status: 'error', error }),
@@ -119,6 +119,19 @@ test('primary quota returns while its history write is pending', async () => {
   expect(await request).toBe(success);
   expect(post).toHaveBeenCalledTimes(1);
   history.resolve({});
+});
+
+test('a collector joined to a failed reset performs a fresh provider read', async () => {
+  const mutation = deferred();
+  const { adapter, read, reads, post } = setup(mutation.promise);
+  const reset = adapter.resetQuota?.(file, i18n.t).catch(() => {});
+  const collector = adapter.fetchQuota(file, i18n.t);
+  mutation.resolve(Promise.reject(new Error('synthetic reset failure')));
+  await reset;
+  read.resolve(success);
+  expect(await collector).toBe(success);
+  expect(reads()).toBe(1);
+  expect(post).toHaveBeenCalledTimes(1);
 });
 
 afterAll(() => { if (previousWindow) Object.defineProperty(globalThis, 'window', previousWindow); else Reflect.deleteProperty(globalThis, 'window'); });

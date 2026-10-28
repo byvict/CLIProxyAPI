@@ -24,7 +24,12 @@ export function withQuotaHistory(adapter: QuotaAdapter): QuotaAdapter {
         fileGenerations: { ...state.fileGenerations, [file.name]: (state.fileGenerations[file.name] ?? 0) + 1 },
       }));
       const key = keyFor(file);
-      const existing = !reset && (resets.get(key) ?? inflight.get(key));
+      const resetting = !reset && resets.get(key);
+      if (resetting) return resetting.catch((error: unknown) => {
+        if (keyFor(file) !== key) throw error;
+        return wrap(read)(file, t);
+      });
+      const existing = !reset && inflight.get(key);
       if (existing) return existing;
       const client = apiClient.captureConnection();
       const current = () => keyFor(file) === key;
