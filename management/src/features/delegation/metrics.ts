@@ -163,3 +163,27 @@ export function panelMetrics(report: Report, rows: Dispatch[]) {
       };
     });
 }
+
+export function familyContributions(panels: ReturnType<typeof panelMetrics>) {
+  const families = new Map<
+    string,
+    { family: string; exclusive: number; shared: number; panels: number }
+  >();
+  for (const panel of panels) {
+    for (const entry of panel.families) {
+      const total = families.get(entry.family) ?? {
+        family: entry.family,
+        exclusive: 0,
+        shared: 0,
+        panels: 0,
+      };
+      total.exclusive += entry.exclusive;
+      total.shared += entry.shared;
+      total.panels++;
+      families.set(entry.family, total);
+    }
+  }
+  return [...families.values()].sort((a, b) =>
+    a.family.localeCompare(b.family),
+  );
+}

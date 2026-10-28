@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { parseDelegation, type Dispatch, type Report } from '../src/features/delegation/data';
 import {
+  familyContributions,
   indexReport,
   matrix,
   panelMetrics,
@@ -76,6 +77,51 @@ const report: Report = {
 };
 const all = { from: '', to: '', role: '', model: '', project: '' };
 describe('Delegation evidence semantics', () => {
+  test('family contributions consolidate complete panels without treating shared findings as globally distinct', () => {
+    const data: Report = {
+      ...report,
+      dispatches: [
+        ...report.dispatches,
+        dispatch('a2', 'gpt'),
+        dispatch('b2', 'claude'),
+        dispatch('c2', 'muse'),
+      ],
+      contributions: [
+        ...report.contributions,
+        {
+          ...report.contributions[0],
+          contribution_id: 'two',
+          panel_id: 'second',
+          discoverers: [{ dispatch_id: 'c2', child_family: 'muse' }],
+        },
+      ],
+      panels: [
+        ...report.panels,
+        {
+          ...report.panels[0],
+          panel_id: 'second',
+          dispatch_ids: ['a2', 'b2', 'c2'],
+        },
+      ],
+    };
+    const panels = panelMetrics(data, selectDispatches(data, all));
+    expect(familyContributions(panels)).toEqual([
+      { family: 'claude', exclusive: 0, shared: 1, panels: 2 },
+      { family: 'gpt', exclusive: 0, shared: 1, panels: 2 },
+      { family: 'muse', exclusive: 1, shared: 0, panels: 2 },
+    ]);
+    expect(panels.reduce((sum, panel) => sum + panel.union, 0)).toBe(2);
+  });
+  test('family aggregates stay unavailable when filters leave no complete panel', () => {
+    expect(
+      familyContributions(
+        panelMetrics(
+          report,
+          selectDispatches(report, { ...all, model: 'gpt' }),
+        ),
+      ),
+    ).toEqual([]);
+  });
   test('implementation artifacts still need inspected application evidence', () => {
     const data: Report = { ...report, contributions: [{ ...report.contributions[0], kind: 'implementation_artifact' }] };
     const result = totals(selectDispatches(data, all), indexReport(data));

@@ -1,5 +1,10 @@
 # Local releases
 
+## 8.0.44-local.7
+
+- Show only aggregate family contribution dashboards, without individual panels, findings or evidence accordions.
+- Distinguish identified dispatches from analyzed outcomes and preserve unknown utilization.
+
 ## 8.0.44-local.6
 
 - Remove percentages and reset timestamps inside weekly and 5-hour quota timeline bars, preserving fills and hover details.

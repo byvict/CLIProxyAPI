@@ -14,7 +14,7 @@ dispatcher-family matrices use different historical identities. Acceptance rates
 count inspected dispatches with a used contribution; application rates exclude
 uninspected applications and verification artifacts where source-code application
 does not apply. Complete-panel exclusivity requires every roster member in the
-selected cohort. Shared causes count once, and source references remain inspectable.
+selected cohort. Shared causes count once in overall totals. The page shows only family and cohort aggregates, without individual panels, findings or evidence accordions. Source references remain in the retained audit data.
 
 `GET /v8/management/delegation` uses the existing management authentication. It reads
 `delegation-observatory/publication.json` beside the proxy configuration, verifies the
@@ -44,7 +44,7 @@ audited `expected-metrics.json` totals (`work`, `evaluated`, `used`, `applied`,
 `applicationEvaluated`, `allExclusive`, `panels`, `reviewUsed`, `reviewEvaluated`).
 The checker reads the real authenticated endpoint for its primary assertions and
 uses synthetic responses only for unavailable, empty and error states. It verifies
-filters, root/dispatcher selection, source references, mobile layout and existing
+filters, root/dispatcher selection, aggregate-only content, mobile layout and existing
 navigation. External provider requests are disabled in the fixture.
 
 Quota History reuses the v1 markup, CSS, chart renderer, filters, and keyboard

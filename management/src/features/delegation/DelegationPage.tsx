@@ -2,11 +2,12 @@ import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { IconRefreshCw } from "@/components/ui/icons";
 import { useActivity } from "@/features/performance/api";
-import { parseDelegation, type Contribution, type Report } from "./data";
+import { parseDelegation, type Report } from "./data";
 import {
   dateTime,
   day,
   familyName,
+  familyContributions,
   indexReport,
   matrix,
   number,
@@ -87,9 +88,14 @@ function Dashboard({ report }: { report: Report }) {
   const cells = matrix(rows, index, basis);
   const groups = relationships(rows, index, basis);
   const panels = panelMetrics(report, rows);
-  const selected = new Set(rows.map((d) => d.dispatch_id));
-  const contributions = report.contributions.filter((c) =>
-    c.discoverers.some((d) => selected.has(d.dispatch_id)),
+  const families = familyContributions(panels);
+  const contributionScale = Math.max(
+    1,
+    ...families.flatMap((f) => [f.exclusive, f.shared]),
+  );
+  const distinctContributions = panels.reduce(
+    (total, panel) => total + panel.union,
+    0,
   );
   const allExclusive = panels.filter((p) => p.allExclusive).length;
   const roles = [...new Set(work.map((d) => d.role))].sort();
@@ -107,13 +113,14 @@ function Dashboard({ report }: { report: Report }) {
       </p>
       <aside className={styles.coverage} aria-label="Cobertura da auditoria">
         <strong>
-          {number(global.evaluated)} de {number(global.dispatched)} despachos
-          tiveram o aproveitamento avaliado.
+          {number(global.dispatched)} despachos identificados.{" "}
+          {number(global.evaluated)} analisados quanto ao aproveitamento.
         </strong>
         <p>
-          {number(global.unknown)} ainda não avaliados. Não são classificados
-          como inúteis. A amostra inspecionada não representa necessariamente
-          todo o histórico.
+          Identificados significa que os metadados foram coletados. Analisados
+          significa que os resultados e as decisões de uso foram conferidos.
+          Faltam analisar {number(global.unknown)} despachos. Seu aproveitamento
+          ainda é desconhecido.
         </p>
         <progress
           max={Math.max(1, global.dispatched)}
@@ -191,7 +198,7 @@ function Dashboard({ report }: { report: Report }) {
       )}
       <div className={styles.stats} aria-live="polite">
         <div>
-          <span>Despachos no recorte</span>
+          <span>Despachos identificados</span>
           <strong>{number(summary.dispatched)}</strong>
           <small>
             {number(rows.filter((d) => d.status === "completed").length)}{" "}
@@ -199,12 +206,13 @@ function Dashboard({ report }: { report: Report }) {
           </small>
         </div>
         <div>
-          <span>Aproveitados / avaliados</span>
+          <span>Aproveitados / analisados</span>
           <strong>
             {summary.accepted} / {summary.evaluated}
           </strong>
           <small>
-            {percent(summary.rate)} · {number(summary.unknown)} não avaliados
+            {percent(summary.rate)} · {number(summary.unknown)} ainda não
+            analisados
           </small>
         </div>
         <div>
@@ -255,8 +263,8 @@ function Dashboard({ report }: { report: Report }) {
           </div>
         </div>
         <p className={styles.note}>
-          Cada célula mostra enviados, avaliados e aproveitados. A taxa usa
-          apenas os avaliados.
+          Cada célula mostra identificados, analisados e aproveitados. A taxa
+          usa apenas os analisados.
         </p>
         <div className={styles.tableScroll}>
           <table className={styles.matrix}>
@@ -286,7 +294,7 @@ function Dashboard({ report }: { report: Report }) {
                         {number(cell.dispatched)} <small>enviados</small>
                       </strong>
                       <span>
-                        {cell.evaluated} avaliados · {cell.accepted}{" "}
+                        {cell.evaluated} analisados · {cell.accepted}{" "}
                         aproveitados
                       </span>
                       <span>
@@ -303,7 +311,7 @@ function Dashboard({ report }: { report: Report }) {
       <section aria-label="Mesma família e famílias diferentes">
         <h2>Aproveitamento por cadeira</h2>
         <p className={styles.note}>
-          Aproveitados / avaliados. Origem ou delegado desconhecidos ficam fora
+          Aproveitados / analisados. Origem ou delegado desconhecidos ficam fora
           desta comparação.
         </p>
         <div className={styles.roleCharts}>
@@ -320,76 +328,58 @@ function Dashboard({ report }: { report: Report }) {
           Esta observação não estabelece superioridade de uma família.
         </p>
       </section>
-      <section aria-label="Contribuições exclusivas por painel">
-        <h2>O que cada família acrescentou</h2>
-        <p className={styles.note}>
-          Exclusivo: contribuição aceita ou aplicada que nenhuma outra família
-          do painel identificou. Painéis com membros fora do filtro não entram
-          na contagem.
-        </p>
+      <section aria-label="Contribuições por família">
+        <h2>Contribuições por família</h2>
         {!panels.length ? (
-          <p>Sem painéis completos neste recorte.</p>
+          <p>Sem painéis completos analisados neste recorte.</p>
         ) : (
-          <div className={styles.tableScroll}>
-            <table>
-              <thead>
-                <tr>
-                  <th>Painel</th>
-                  <th>Contribuições distintas</th>
-                  <th>Exclusivas por família</th>
-                  <th>As três acrescentaram?</th>
-                </tr>
-              </thead>
-              <tbody>
-                {panels.map((p) => (
-                  <tr key={p.panel_id}>
-                    <td>
-                      {p.panel_id}
-                      <small>
-                        {p.scope.includes("fix")
-                          ? "Revisão da correção"
-                          : "Revisão inicial"}
-                      </small>
-                    </td>
-                    <td>{p.union}</td>
-                    <td>
-                      <div className={styles.exclusives}>
-                        {p.families.map((f) => (
-                          <span key={f.family}>
-                            {familyName(f.family)} <b>{f.exclusive}</b>
-                            <small>{f.shared} compartilhadas</small>
-                          </span>
-                        ))}
-                      </div>
-                    </td>
-                    <td>{p.allExclusive ? "Sim" : "Não"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <>
+            <p className={styles.note}>
+              {number(distinctContributions)} contribuições distintas aceitas ou
+              aplicadas em {number(panels.length)} painéis completos analisados.
+              Exclusivas foram identificadas somente por uma família.
+              Compartilhadas foram identificadas por mais de uma.
+            </p>
+            <div className={styles.roleCharts}>
+              {families.map((family) => (
+                <div key={family.family} className={styles.roleChart}>
+                  <h3>{familyName(family.family)}</h3>
+                  <div className={styles.barRow}>
+                    <div>
+                      <span>Exclusivas</span>
+                      <span>{number(family.exclusive)}</span>
+                    </div>
+                    <progress
+                      max={contributionScale}
+                      value={family.exclusive}
+                      aria-label={`${familyName(family.family)}: ${family.exclusive} contribuições exclusivas`}
+                    />
+                  </div>
+                  <div className={styles.barRow}>
+                    <div>
+                      <span>Compartilhadas</span>
+                      <span>{number(family.shared)}</span>
+                    </div>
+                    <progress
+                      max={contributionScale}
+                      value={family.shared}
+                      aria-label={`${familyName(family.family)}: ${family.shared} contribuições compartilhadas`}
+                    />
+                  </div>
+                  <p className={styles.note}>
+                    {number(family.panels)} painéis analisados
+                  </p>
+                </div>
+              ))}
+            </div>
+            <p className={styles.note}>
+              Uma contribuição compartilhada aparece em cada família que a
+              identificou. A soma entre famílias pode superar o total de
+              contribuições distintas. Entram somente painéis completos cujos
+              participantes estão no filtro.
+            </p>
+          </>
         )}
-      </section>
-      <section aria-label="Achados e evidências">
-        <h2>Propostas e achados inspecionados</h2>
-        <p className={styles.note}>
-          Aceito significa que o responsável decidiu aproveitar. Aplicação
-          comprovada exige inspeção do artefato; não equivale a prova de
-          execução ou implantação.
-        </p>
-        {!contributions.length && (
-          <p>
-            Nenhuma contribuição inspecionada neste recorte. Isso não demonstra
-            ausência de contribuições.
-          </p>
-        )}
-        {contributions.map((c) => (
-          <ContributionDetails
-            key={c.contribution_id}
-            contribution={c}
-            report={report}
-          />
-        ))}
       </section>
       <footer className={styles.note}>
         Histórico local persistido no T3; tarefas nativas não registradas e
@@ -424,78 +414,12 @@ function RateBar({
       <progress
         value={metric.rate ?? 0}
         max={1}
-        aria-label={`${label}: ${metric.accepted} aproveitados de ${metric.evaluated} avaliados`}
+        aria-label={`${label}: ${metric.accepted} aproveitados de ${metric.evaluated} analisados`}
       />
       <small>
-        {number(metric.dispatched)} despachos · {number(metric.unknown)} não
-        avaliados
+        {number(metric.dispatched)} despachos · {number(metric.unknown)} ainda
+        não analisados
       </small>
     </div>
-  );
-}
-
-function ContributionDetails({
-  contribution: c,
-  report,
-}: {
-  contribution: Contribution;
-  report: Report;
-}) {
-  const evidenceIDs = new Set([
-    ...(c.decision_evidence_ids ?? []),
-    ...(c.artifact_evidence_ids ?? []),
-  ]);
-  const evidence = report.evidence.filter((e) =>
-    evidenceIDs.has(e.evidence_id),
-  );
-  const families = [...new Set(c.discoverers.map((d) => d.child_family))];
-  const disposition =
-    c.accepted === true || c.applied === true
-      ? "Aceita"
-      : c.disposition === "rejected"
-        ? "Rejeitada"
-        : c.disposition === "noted"
-          ? "Não selecionada"
-          : "Sem decisão confirmada";
-  const application = c.kind.endsWith("_artifact")
-    ? "Artefato de verificação; aplicação não se aplica"
-    : c.applied === true
-      ? "Aplicação comprovada"
-      : c.accepted === true && c.applied === null
-        ? "Aplicação ainda não conferida"
-        : "Sem aplicação comprovada";
-  return (
-    <details className={styles.finding}>
-      <summary>
-        <span>{c.label}</span>
-        <small>
-          {disposition} · {families.map(familyName).join(" + ")}
-        </small>
-      </summary>
-      <p>
-        {application} · {c.kind} · {c.severity}
-      </p>
-      <p>
-        {families.length === 1
-          ? "Exclusiva nesta avaliação"
-          : "Descoberta compartilhada"}{" "}
-        · {c.panel_id ?? "Contribuição fora de painel"}
-      </p>
-      <h3>Referências da decisão e do artefato</h3>
-      {evidence.length ? (
-        evidence.map((e) => (
-          <div key={e.evidence_id} className={styles.evidence}>
-            <span>{e.kind}</span>
-            <code>{e.source_item_id || e.source_id || e.evidence_id}</code>
-            {e.thread_id && <code>Thread: {e.thread_id}</code>}
-            {e.base && <code>Base: {e.base}</code>}
-            {e.head && <code>Head: {e.head}</code>}
-            {e.sha256 && <code>SHA-256: {e.sha256}</code>}
-          </div>
-        ))
-      ) : (
-        <p>Referências detalhadas indisponíveis nesta publicação.</p>
-      )}
-    </details>
   );
 }

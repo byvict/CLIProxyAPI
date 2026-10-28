@@ -209,50 +209,6 @@
     margin-top: 7px;
   }
 }
-.exclusives {
-  display: flex;
-  gap: 20px;
-  white-space: nowrap;
-  b {
-    font-weight: 500;
-    color: #ff5900;
-  }
-}
-.finding {
-  border-bottom: 1px solid var(--border-color);
-  padding: 14px 0;
-  summary {
-    cursor: pointer;
-    line-height: 1.6;
-    font-size: 13px;
-    small {
-      display: block;
-      color: var(--text-secondary);
-      margin-left: 16px;
-    }
-  }
-  p {
-    font-size: 12px;
-    line-height: 1.6;
-  }
-  h3 {
-    font-size: 12px;
-    font-weight: 500;
-  }
-}
-.evidence {
-  padding: 10px;
-  background: var(--bg-secondary);
-  border-radius: 5px;
-  margin: 8px 0;
-  font-size: 11px;
-  span,
-  code {
-    display: block;
-    overflow-wrap: anywhere;
-    line-height: 1.7;
-  }
-}
 .empty {
   padding: 24px 0;
   color: var(--text-secondary);
