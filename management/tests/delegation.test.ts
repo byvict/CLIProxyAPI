@@ -140,6 +140,32 @@ describe('Delegation evidence semantics', () => {
     expect(result.applied).toBe(0);
     expect(result.applicationEvaluated).toBe(1);
   });
+  test('inspected work with unknown utilization stays distinct from unread work and rate denominators', () => {
+    const data: Report = {
+      ...report,
+      dispatches: [...report.dispatches, dispatch('unread', 'grok')],
+      attribution_coverage: [
+        ...report.attribution_coverage,
+        { dispatch_id: 'unknown', evaluable: false, evidence_ids: [] },
+        { dispatch_id: 'audit', evaluable: false, evidence_ids: [] },
+      ],
+    };
+    const result = totals(selectDispatches(data, all), indexReport(data));
+    expect(result.dispatched).toBe(5);
+    expect(result.inspected).toBe(4);
+    expect(result.uninspected).toBe(1);
+    expect(result.unresolved).toBe(1);
+    expect(result.evaluated).toBe(3);
+    expect(result.rate).toBe(2 / 3);
+    const filtered = totals(
+      selectDispatches(data, { ...all, model: 'grok' }),
+      indexReport(data),
+    );
+    expect(filtered.inspected).toBe(1);
+    expect(filtered.uninspected).toBe(1);
+    expect(filtered.unresolved).toBe(1);
+    expect(filtered.rate).toBeNull();
+  });
   test('a family without inspected outcomes has a null rate, not a zero efficiency', () => {
     const rows = selectDispatches(report, { ...all, model: 'grok' });
     expect(totals(rows, indexReport(report)).rate).toBeNull();
