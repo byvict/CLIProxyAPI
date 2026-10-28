@@ -84,6 +84,18 @@ describe('recorded timeline bootstrap', () => {
     expect(lane([variant, session, observation]).windowId).toBe('weekly');
     expect(lane([variant, session, observation], { maxPeriodHours: 5 }).windowId).toBe('five-hour');
   });
+  test('unknown standard Codex windows never become model-specific quota', () => {
+    for (const [windowId, periodHours] of [['weekly', 168], ['five-hour', 5]] as const) {
+      const standard = { ...observation, windowId, periodHours };
+      const variant = { ...standard, windowId: `spark-${windowId}`, remaining: 1 };
+      for (const unknown of [{ remaining: null }, { resetAtMs: null }]) {
+        const latest = { ...standard, ...unknown, observedAtMs: now };
+        const result = lane([standard, variant, latest], { maxPeriodHours: periodHours });
+        expect(result.remaining).toBeNull();
+        expect(result.anchorMs).toBeNull();
+      }
+    }
+  });
   test('successful live or retained response including empty and unknown is authoritative', () => {
     expect(lane([observation], { quota: { status: 'success' } }).anchorMs).toBeNull();
     expect(

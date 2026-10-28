@@ -36,19 +36,19 @@ export function historyTimelineLane(
     input.maxPeriodHours !== undefined && input.maxPeriodHours <= 5 ? 'five-hour' : 'weekly';
   const preferred =
     input.provider === 'codex'
-      ? windows.find(
+      ? [...latest.values()].find(
           (window) =>
             window.windowId === preferredId &&
-            window.resetAtMs !== null &&
             window.periodHours !== null &&
+            Number.isFinite(window.periodHours) &&
             window.periodHours > 0 &&
             (input.maxPeriodHours === undefined || window.periodHours <= input.maxPeriodHours)
         )
       : undefined;
   const chosen = preferred ?? pickLaneWindow(windows, input.maxPeriodHours);
-  if (!chosen) return live;
+  if (!chosen || chosen.remaining === null || chosen.resetAtMs === null) return live;
   const remaining =
-    chosen.resetAtMs !== null && chosen.resetAtMs > now && chosen.remaining !== null
+    chosen.resetAtMs > now
       ? Math.min(100, Math.max(0, chosen.remaining))
       : null;
   return {
