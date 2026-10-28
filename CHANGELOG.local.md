@@ -1,5 +1,9 @@
 # Local releases
 
+## 8.0.44-local.5
+
+- Show the quota windows table above provider summary cards on desktop and mobile.
+
 ## 8.0.44-local.4
 
 - Add the Agentes dashboard for real T3 dispatches, inspected contributions, root/delegate family comparisons and complete-panel exclusivity.

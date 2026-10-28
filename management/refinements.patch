@@ -1477,3 +1477,164 @@ index 8b63c4e..3bdca56 100644
      expect(markup).not.toContain('width:');
      expect(markup).not.toContain('Used 14%');
    });
+diff --git a/src/features/quota/QuotaPage.tsx b/src/features/quota/QuotaPage.tsx
+--- a/src/features/quota/QuotaPage.tsx
++++ b/src/features/quota/QuotaPage.tsx
+@@ -1,11 +1,11 @@
+ /**
+- * 额度查询页：提供商 tabs + 统一卡网格。
++ * Quota page: provider tabs, timeline, and a shared card grid.
+  *
+- * 保留的行为契约（重设计不改）：
+- * - 现有提供商保持点击加载；Devin 首次可见时主动查询一次，不轮询；
+- * - cacheGeneration 会话隔离 + request-id 去重（见 useQuotaBatchLoader）；
+- * - 文件列表变化后按 provider 剪枝额度缓存（已删文件不残留）；
+- * - useHeaderRefresh 单槽位：本页唯一注册者，全局刷新 = 重取文件列表。
++ * Preserved behavior:
++ * - Existing providers load on demand; Devin loads once when first visible, without polling.
++ * - cacheGeneration isolates sessions; request IDs deduplicate loads (see useQuotaBatchLoader).
++ * - File list changes prune provider caches so deleted credentials do not linger.
++ * - This page owns the useHeaderRefresh slot; global refresh reloads the file list.
+  */
+
+ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+@@ -77,12 +77,12 @@
+   const [page, setPage] = useState(1);
+   const [search, setSearch] = useState('');
+   const searchInputRef = useRef<HTMLInputElement>(null);
+-  // 页头 + tabs 的入场级联（标题 → meta → 动作 → tabs，级差 70ms）
++  // Stagger header and tab entrances by 70ms: title, metadata, actions, then tabs.
+   const revealRef = useRevealGroup<HTMLDivElement>();
+
+   const disableControls = connectionStatus !== 'connected';
+
+-  /* ---------- 文件列表 ---------- */
++  /* ---------- File list ---------- */
+
+   const sessionGeneration = useQuotaStore((state) => state.cacheGeneration);
+   const [filesGeneration, setFilesGeneration] = useState<number | null>(null);
+@@ -123,8 +123,8 @@
+     };
+   }, [loadFiles]);
+
+-  /* ---------- 额度缓存 ----------
+-   * 排在归类/排序之前：「最快恢复优先」要读它算排序键。 */
++  /* ---------- Quota cache ----------
++   * Read before classification and sorting to compute recovery-time sort keys. */
+
+   const antigravityQuota = useQuotaStore((state) => state.antigravityQuota);
+   const claudeQuota = useQuotaStore((state) => state.claudeQuota);
+@@ -165,10 +165,10 @@
+     [quotaByType]
+   );
+
+-  /* ---------- 归类 / 过滤 / 排序 / 分页 ---------- */
+-
+-  // 只在「最快恢复优先」下订阅分钟时钟。默认序下不门控的话，pageItems 每分钟
+-  // 换一次身份，会反复空转下面那个「刷新全部」的 loading 下降沿 effect。
++  /* ---------- Classification / filtering / sorting / pagination ---------- */
++
++  // Subscribe to the minute clock only when sorting by recovery time. Otherwise,
++  // pageItems changes every minute and needlessly reruns the refresh-all completion effect.
+   const tick = useNow(sortMode !== 'default');
+   const sortNow = sortMode === 'default' ? 0 : tick;
+
+@@ -187,7 +187,7 @@
+     (entry: QuotaFileEntry) => nextRecoveryMs(entry.type, getQuota(entry), sortNow),
+     [getQuota, sortNow]
+   );
+-  // 排序在分页之前：否则「最快恢复」只在当前页内成立。
++  // Sort before pagination so recovery order applies across all pages.
+   const sortedEntries = useMemo(
+     () => sortQuotaEntries(filteredEntries, sortMode, resolveNextRecovery),
+     [filteredEntries, sortMode, resolveNextRecovery]
+@@ -227,7 +227,7 @@
+     return { loadedCount: loaded, attentionCount: attention };
+   }, [entries, quotaByType]);
+
+-  // 剪枝：文件列表落定后，各 provider 缓存只保留仍存在的凭证
++  // Once the file list settles, prune each provider cache to surviving credentials.
+   useEffect(() => {
+     if (loading || error || filesGeneration !== sessionGeneration) return;
+     const survivorsByType = new Map<QuotaProviderType, Set<string>>(
+@@ -248,7 +248,7 @@
+     });
+   }, [entries, error, filesGeneration, loading, sessionGeneration]);
+
+-  /* ---------- 加载与操作 ---------- */
++  /* ---------- Loading and actions ---------- */
+
+   const { batchLoading, loadQuota } = useQuotaBatchLoader();
+   const { resettingQuotaName, refreshQuota, resetQuota } = useQuotaActions(disableControls);
+@@ -256,7 +256,7 @@
+   const pendingRefreshRef = useRef<number | null>(null);
+   const prevLoadingRef = useRef(loading);
+
+-  // 刷新全部：先重取文件列表，待其落定（loading 下降沿）再批量拉当前页额度
++  // Refresh all: reload files, then load quotas for the current page once loading finishes.
+   const handleRefreshAll = useCallback(() => {
+     if (disableControls) return;
+     pendingRefreshRef.current = sessionGeneration;
+@@ -301,10 +301,10 @@
+
+   const canUseActions = !disableControls && !loading && filesGeneration === sessionGeneration;
+
+-  /* ---------- 首屏卡片一次性级联入场 ----------
+-   * 首批数据渲染后立即翻转 cardsAnimated；已挂载的卡片在挂载时捕获过自己的
+-   * 延迟（QuotaCard 内 useState 初始化），后续切 tab/翻页/刷新新挂载的卡片
+-   * 拿到 null —— 不重播。 */
++  /* ---------- One-time card entrance ----------
++   * Set cardsAnimated after the first batch renders. Mounted cards capture their delay
++   * in QuotaCard's useState initializer. Cards mounted after tab changes, pagination,
++   * or refresh receive null and do not replay the entrance. */
+
+   const [cardsAnimated, setCardsAnimated] = useState(false);
+   const enableCardEntrance = !cardsAnimated && !loading && pageItems.length > 0;
+@@ -319,7 +319,7 @@
+     return Math.round((index / (pageItems.length - 1)) * CARD_ENTRANCE_BUDGET_MS);
+   };
+
+-  /* ---------- 渲染 ---------- */
++  /* ---------- Rendering ---------- */
+
+   const isEmpty = !loading && filteredEntries.length === 0;
+
+@@ -335,7 +335,7 @@
+       />
+
+       <section className={styles.workbench}>
+-        {/* 提供商导航与搜索工具栏分层，避免不同控件争夺视觉焦点。 */}
++        {/* Separate provider navigation from the search toolbar to keep each focused. */}
+         <div className={styles.tabsRow} data-reveal>
+           <ProviderTabs
+             types={TAB_IDS}
+@@ -389,6 +389,14 @@
+             {error}
+           </div>
+         )}
++
++        {/* Compare only current-page credentials to keep the number of timeline lanes bounded. */}
++        <QuotaTimeline
++          entries={pageItems}
++          quotaFor={getQuota}
++          displayNameFor={displayNameFor}
++          resolvedTheme={resolvedTheme}
++        />
+
+         {loading ? (
+           <div className={styles.grid} aria-hidden="true">
+@@ -469,14 +477,6 @@
+             </Button>
+           </div>
+         )}
+-
+-        {/* 时间线只比较当前页凭证，避免大量凭证一次性生成无界泳道。 */}
+-        <QuotaTimeline
+-          entries={pageItems}
+-          quotaFor={getQuota}
+-          displayNameFor={displayNameFor}
+-          resolvedTheme={resolvedTheme}
+-        />
+       </section>
+     </div>
+   );
