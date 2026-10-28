@@ -20,6 +20,17 @@ const codex = { plan_type: 'pro', credits: { balance: '62500.0000000000', unlimi
 const resets = { available_count: 2, credits: [1, 10].map((days, index) => ({ id: `fixture-${index}`, status: 'available', reset_type: 'codex_rate_limits', granted_at: new Date(now - 86400000).toISOString(), expires_at: future(days) })) };
 const grok = { currentPeriod: { type: 'USAGE_PERIOD_TYPE_WEEKLY', start: new Date(now - 86400000).toISOString(), end: future(6) }, billingPeriodEnd: future(6), creditUsagePercent: 6, monthlyLimit: { val: 0 }, used: { val: 0 }, onDemandCap: { val: 0 }, productUsage: [{ product: 'GrokBot', usagePercent: 5 }, { product: 'GrokBuild', usagePercent: 1 }] };
 const meta = { subs_tier_name: 'Muse Code Max Usage', is_subs_active: true, subs_usage: { window: { used_percent: 16, window_duration_mins: 300, resets_at: Math.floor((now + 2 * 3600000) / 1000) }, weekly: { used_percent: 57, resets_at: Math.floor((now + 5 * 86400000) / 1000) } } };
+const history = (provider, windowId, hours, remaining, rate, resetDays) => Array.from({length: hours * 12 + 1}, (_, i) => ({
+  credential: `fixture-${provider}`, provider, windowId, label: 'Weekly',
+  observedAtMs: now - (hours - i / 12) * 3600000,
+  remaining: remaining + (hours - i / 12) * rate,
+  resetAtMs: now + resetDays * 86400000, periodHours: 168,
+}));
+const observations = [
+  ...history('codex', 'weekly', 6, 52, 2, 5),
+  ...history('claude', 'seven-day', 24, 84, 0.2, 2),
+  ...history('xai', 'weekly', 24, 94, 0.1, 6).map(s => ({...s, remaining: s.observedAtMs >= now - 6 * 3600000 ? 94 : s.remaining})),
+].sort((a, b) => a.observedAtMs - b.observedAtMs);
 const browser = await chromium.launch({headless: true});
 const receipts = [];
 try {
@@ -57,7 +68,7 @@ try {
       if (path.endsWith('/credentials')) return json({files});
       if (path.endsWith('/credentials/download')) return json({dca_token: 'dca:synthetic-fixture'});
       if (path.endsWith('/quota-history/poll')) return json({claimed: false});
-      if (path.endsWith('/quota-history')) return json({observations: []});
+      if (path.endsWith('/quota-history')) return json({observations});
       if (path.startsWith('/v8/management')) return json({});
       return route.abort();
     });
@@ -76,6 +87,21 @@ try {
     assert.equal(await cards.count(), 4);
     const cardMetrics = await cards.evaluateAll((nodes) => nodes.map((card) => ({ text: card.innerText, height: Math.round(card.getBoundingClientRect().height), bars: card.querySelectorAll('[class*="quotaBar_"]').length, overflow: card.scrollWidth > card.clientWidth })));
     const timeline = page.locator('section').filter({has: page.getByText('Quota windows', {exact: true})}).last();
+    const summary = timeline.locator('[data-projection-status="projected"]');
+    await summary.waitFor();
+    assert((await summary.innerText()).includes('Provisional'));
+    assert.equal(await timeline.locator('[data-projection-status="survives-reset"]').count(), 1);
+    assert.equal(await timeline.locator('[data-projection-status="unstable"]').count(), 1);
+    assert.equal(await timeline.locator('[data-band]').count(), 1, 'Only exhaustion before reset has a marker');
+    assert.equal(await timeline.locator('[data-band][data-provisional]').count(), 1);
+    await summary.locator('summary').focus();
+    await page.keyboard.press('Enter');
+    assert.equal(await summary.getAttribute('open'), '');
+    assert((await summary.innerText()).includes('25% coverage'));
+    const expanded = await summary.boundingBox();
+    const nextLane = await summary.locator('xpath=ancestor::div[contains(@class,"laneHead")]/parent::div/following-sibling::div[1]').boundingBox();
+    if (nextLane) assert(expanded.y + expanded.height <= nextLane.y, 'Expanded explanation must not overlap the next provider');
+    await summary.locator('summary').click();
     assert((await timeline.locator('[role="img"]').count()) > 0, 'Timeline must retain its quota bars');
     {
       assert(cardMetrics.every((card) => card.bars === 0), 'Summary cards must have no quota bars');
