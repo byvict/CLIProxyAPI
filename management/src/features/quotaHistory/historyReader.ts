@@ -8,6 +8,7 @@ import { quotaObservations } from './observations';
 
 export function withQuotaHistory(adapter: QuotaAdapter): QuotaAdapter {
   const inflight = new Map<string, Promise<unknown>>();
+  const resets = new Map<string, Promise<unknown>>();
   const enrichments = new Map<string, { data: unknown; promise: Promise<unknown> }>();
   const identity = (file: AuthFileItem) => JSON.stringify([
     adapter.type, file.name, normalizeAuthIndex(file.auth_index ?? file.authIndex),
@@ -23,7 +24,7 @@ export function withQuotaHistory(adapter: QuotaAdapter): QuotaAdapter {
         fileGenerations: { ...state.fileGenerations, [file.name]: (state.fileGenerations[file.name] ?? 0) + 1 },
       }));
       const key = keyFor(file);
-      const existing = !reset && inflight.get(key);
+      const existing = !reset && (resets.get(key) ?? inflight.get(key));
       if (existing) return existing;
       const client = apiClient.captureConnection();
       const current = () => keyFor(file) === key;
@@ -34,21 +35,19 @@ export function withQuotaHistory(adapter: QuotaAdapter): QuotaAdapter {
         if (authIndex) {
           const observations = quotaObservations(authIndex, adapter.type, adapter.buildSuccessState(data), Date.now());
           if (observations.length) {
-            try {
-              await recordQuotaHistory(authIndex, observations, client);
+            void recordQuotaHistory(authIndex, observations, client).then(() => {
               if (current()) window.dispatchEvent(new Event('quota-history-updated'));
-            } catch {
+            }).catch(() => {
               if (current()) window.dispatchEvent(new Event('quota-history-error'));
-            }
+            });
           }
         }
         if (!current()) throw new DOMException('Quota read superseded', 'AbortError');
         return data;
       })();
-      if (!reset) {
-        inflight.set(key, promise);
-        void promise.finally(() => { if (inflight.get(key) === promise) inflight.delete(key); }).catch(() => {});
-      }
+      const pending = reset ? resets : inflight;
+      pending.set(key, promise);
+      void promise.finally(() => { if (pending.get(key) === promise) pending.delete(key); }).catch(() => {});
       return promise;
     };
   return {

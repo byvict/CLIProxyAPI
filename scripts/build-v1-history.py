@@ -67,7 +67,7 @@ for name in names:
     if name == "load":
         body = body.replace("const version = ++requestVersion;", "loadController.abort(); loadController = new AbortController();\n    const version = ++requestVersion; refreshing = true;")
         body = body.replace("finally { if (version === requestVersion) root.setAttribute('aria-busy', 'false'); }", "finally { if (version === requestVersion) { root.setAttribute('aria-busy', 'false'); refreshing = false; if (dirty && alive) { dirty = false; void updated(); } } }")
-        body = body.replace("if (!snapshot || !view || JSON.stringify(requested) !== JSON.stringify(committedSelection)) render();", "if (!snapshot || !view) render();\n    else if (committedSelection) Object.assign(state, committedSelection);")
+        body = body.replace("if (!snapshot || !view || JSON.stringify(requested) !== JSON.stringify(committedSelection)) render();", "if (!snapshot || !view) render();")
     if name == "header":
         body = body.replace("history: ['Histórico de consumo'", "history: ['Quota History'")
         body = body.replace("Fontes nativas · Histórico local", "Credenciais do proxy · Histórico local")

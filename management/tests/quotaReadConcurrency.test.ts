@@ -88,4 +88,37 @@ test('A to B to A connection switches reject the first A read before persistence
   expect(post).toHaveBeenCalledTimes(1);
 });
 
+test('a collector started during reset shares the confirmed reset reading', async () => {
+  const mutation = deferred();
+  let reads = 0;
+  const post = spyOn(apiClient, 'post').mockResolvedValue({});
+  const capture = spyOn(apiClient, 'captureConnection').mockReturnValue(apiClient);
+  mocks.push(post, capture);
+  const adapter = withQuotaHistory({
+    type: 'codex', i18nPrefix: 'codex_quota', filterFn: () => true,
+    fetchQuota: async () => { reads++; return success; },
+    resetQuota: async () => mutation.promise,
+    storeSelector: (state) => state.codexQuota, storeSetter: 'setCodexQuota',
+    buildLoadingState: () => ({ status: 'loading' }),
+    buildErrorState: (error) => ({ status: 'error', error }),
+    buildSuccessState: () => success, Body: () => null,
+  } satisfies QuotaAdapter);
+  const reset = adapter.resetQuota?.(file, i18n.t);
+  const collector = adapter.fetchQuota(file, i18n.t);
+  mutation.resolve(success);
+  expect(await collector).toBe(await reset);
+  expect(reads).toBe(0);
+  expect(post).toHaveBeenCalledTimes(1);
+});
+test('primary quota returns while its history write is pending', async () => {
+  const { adapter, read, post } = setup();
+  const history = deferred();
+  post.mockImplementation(async () => history.promise);
+  const request = adapter.fetchQuota(file, i18n.t);
+  read.resolve(success);
+  expect(await request).toBe(success);
+  expect(post).toHaveBeenCalledTimes(1);
+  history.resolve({});
+});
+
 afterAll(() => { if (previousWindow) Object.defineProperty(globalThis, 'window', previousWindow); else Reflect.deleteProperty(globalThis, 'window'); });

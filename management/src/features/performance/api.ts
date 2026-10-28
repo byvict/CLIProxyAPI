@@ -216,6 +216,7 @@ export function useActivity<T>(path: string, parse: (value: unknown) => T, enabl
   const apiBase = useAuthStore((state) => state.apiBase);
   const managementKey = useAuthStore((state) => state.managementKey);
   const generation = useQuotaStore((state) => state.cacheGeneration);
+  const readScope = currentScope();
   const subscribe = useCallback((listener: () => void) => {
     listeners.add(listener);
     return () => { listeners.delete(listener); };
@@ -227,6 +228,6 @@ export function useActivity<T>(path: string, parse: (value: unknown) => T, enabl
   const refresh = useCallback(() => { void readActivity(path, parse, true); }, [path, parse]);
   useEffect(() => {
     if (enabled) void readActivity(path, parse, false);
-  }, [apiBase, managementKey, generation, path, parse, enabled]);
+  }, [apiBase, managementKey, generation, readScope, path, parse, enabled]);
   return { state, refresh, refreshing: state.status === 'ready' && state.refreshing };
 }
