@@ -57,6 +57,7 @@ export function selectDispatches(report: Report, filter: Filters) {
   );
 }
 export function indexReport(report: Report) {
+  const inspected = new Set(report.attribution_coverage.map((v) => v.dispatch_id));
   const evaluable = new Set(
     report.attribution_coverage.filter((v) => v.evaluable).map((v) => v.dispatch_id)
   );
@@ -67,15 +68,17 @@ export function indexReport(report: Report) {
       rows.push(c);
       contributions.set(d.dispatch_id, rows);
     }
-  return { evaluable, contributions };
+  return { inspected, evaluable, contributions };
 }
 export function totals(rows: Dispatch[], index: ReturnType<typeof indexReport>) {
-  let evaluated = 0,
+  let inspected = 0,
+    evaluated = 0,
     accepted = 0,
     applied = 0,
     applicationUnknown = 0,
     notApplicable = 0;
   for (const d of rows) {
+    if (index.inspected.has(d.dispatch_id)) inspected++;
     if (!index.evaluable.has(d.dispatch_id)) continue;
     evaluated++;
     const cs = index.contributions.get(d.dispatch_id) ?? [];
@@ -87,6 +90,9 @@ export function totals(rows: Dispatch[], index: ReturnType<typeof indexReport>) 
   const applicationEvaluated = evaluated - applicationUnknown - notApplicable;
   return {
     dispatched: rows.length,
+    inspected,
+    uninspected: rows.length - inspected,
+    unresolved: inspected - evaluated,
     evaluated,
     accepted,
     applied,

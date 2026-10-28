@@ -1,5 +1,9 @@
 # Local releases
 
+## 8.0.44-local.9
+
+- Separate inspected dispatches, evaluable utilization and unread work in the delegation dashboard without changing rate denominators.
+
 ## 8.0.44-local.8
 
 - Accept GPT-6.1 Terra audit imports and preserve the actual auditor model in stored and exported provenance.

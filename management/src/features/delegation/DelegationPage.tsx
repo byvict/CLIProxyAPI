@@ -114,18 +114,18 @@ function Dashboard({ report }: { report: Report }) {
       <aside className={styles.coverage} aria-label="Cobertura da auditoria">
         <strong>
           {number(global.dispatched)} despachos identificados.{" "}
-          {number(global.evaluated)} analisados quanto ao aproveitamento.
+          {number(global.inspected)} analisados.
         </strong>
         <p>
-          Identificados significa que os metadados foram coletados. Analisados
-          significa que os resultados e as decisões de uso foram conferidos.
-          Faltam analisar {number(global.unknown)} despachos. Seu aproveitamento
-          ainda é desconhecido.
+          Nos analisados, os resultados e as decisões disponíveis foram conferidos.{" "}
+          Há {number(global.evaluated)} com aproveitamento avaliável e{" "}
+          {number(global.unresolved)} com aproveitamento ainda desconhecido.
+          Faltam analisar {number(global.uninspected)} despachos.
         </p>
         <progress
           max={Math.max(1, global.dispatched)}
-          value={global.evaluated}
-          aria-label="Cobertura da avaliação"
+          value={global.inspected}
+          aria-label="Cobertura da análise"
         />
       </aside>
       <div className={styles.filters}>
@@ -206,13 +206,13 @@ function Dashboard({ report }: { report: Report }) {
           </small>
         </div>
         <div>
-          <span>Aproveitados / analisados</span>
+          <span>Aproveitados / avaliáveis</span>
           <strong>
             {summary.accepted} / {summary.evaluated}
           </strong>
           <small>
-            {percent(summary.rate)} · {number(summary.unknown)} ainda não
-            analisados
+            {percent(summary.rate)} · {number(summary.uninspected)} sem análise ·{" "}
+            {number(summary.unresolved)} com uso inconclusivo
           </small>
         </div>
         <div>
@@ -221,7 +221,7 @@ function Dashboard({ report }: { report: Report }) {
             {summary.applied} / {summary.applicationEvaluated}
           </strong>
           <small>
-            {summary.applicationUnknown} ainda não conferidos ·{" "}
+            {summary.applicationUnknown} sem comprovação ·{" "}
             {summary.notApplicable} não aplicáveis
           </small>
         </div>
@@ -263,8 +263,8 @@ function Dashboard({ report }: { report: Report }) {
           </div>
         </div>
         <p className={styles.note}>
-          Cada célula mostra identificados, analisados e aproveitados. A taxa
-          usa apenas os analisados.
+          Cada célula mostra identificados, avaliáveis e aproveitados. A taxa
+          usa apenas os que têm aproveitamento avaliável.
         </p>
         <div className={styles.tableScroll}>
           <table className={styles.matrix}>
@@ -294,7 +294,7 @@ function Dashboard({ report }: { report: Report }) {
                         {number(cell.dispatched)} <small>enviados</small>
                       </strong>
                       <span>
-                        {cell.evaluated} analisados · {cell.accepted}{" "}
+                        {cell.evaluated} avaliáveis · {cell.accepted}{" "}
                         aproveitados
                       </span>
                       <span>
@@ -311,7 +311,7 @@ function Dashboard({ report }: { report: Report }) {
       <section aria-label="Mesma família e famílias diferentes">
         <h2>Aproveitamento por cadeira</h2>
         <p className={styles.note}>
-          Aproveitados / analisados. Origem ou delegado desconhecidos ficam fora
+          Aproveitados / avaliáveis. Origem ou delegado desconhecidos ficam fora
           desta comparação.
         </p>
         <div className={styles.roleCharts}>
@@ -414,11 +414,11 @@ function RateBar({
       <progress
         value={metric.rate ?? 0}
         max={1}
-        aria-label={`${label}: ${metric.accepted} aproveitados de ${metric.evaluated} analisados`}
+        aria-label={`${label}: ${metric.accepted} aproveitados de ${metric.evaluated} avaliáveis`}
       />
       <small>
-        {number(metric.dispatched)} despachos · {number(metric.unknown)} ainda
-        não analisados
+        {number(metric.dispatched)} despachos · {number(metric.uninspected)} sem
+        análise · {number(metric.unresolved)} com uso inconclusivo
       </small>
     </div>
   );
