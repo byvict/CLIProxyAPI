@@ -1,5 +1,11 @@
 # Local releases
 
+## 8.0.44-local.11
+
+- Show quota timeline bars and eligible forecasts from recorded observations before provider replies, preserving timestamps and unknown states.
+- Reuse current-session history while navigating and preserve standard Codex window identity when its reading is unknown.
+- Avoid repeated bcrypt checks for a previously verified management key while preserving bans, remote-access policy, and configuration rotation.
+
 ## 8.0.44-local.10
 
 - Load activity without ordering token events, reuse recent results while navigating, and request GitHub activity on demand.
