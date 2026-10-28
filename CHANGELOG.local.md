@@ -1,5 +1,9 @@
 # Local releases
 
+## 8.0.44-local.8
+
+- Accept GPT-6.1 Terra audit imports and preserve the actual auditor model in stored and exported provenance.
+
 ## 8.0.44-local.7
 
 - Show only aggregate family contribution dashboards, without individual panels, findings or evidence accordions.

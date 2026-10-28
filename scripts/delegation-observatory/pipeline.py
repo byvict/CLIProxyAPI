@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Collect real T3 facts, import Sol judgments, aggregate offline, publish atomically."""
+"""Collect real T3 facts, import audited judgments, aggregate offline, publish atomically."""
 
 import argparse
 import datetime as dt
@@ -546,7 +546,7 @@ def audit_queue(root):
             and row.get("applied") is None
             and not row["kind"].endswith("_artifact")
         ],
-        "limits": "Factual queue only. Sol must inspect exact evidence and import revisioned judgments. No inferred non-use.",
+        "limits": "Factual queue only. An auditor must inspect exact evidence and import revisioned judgments. No inferred non-use.",
     }
 
 
@@ -567,7 +567,7 @@ def import_judgments(root, args):
             raise ValueError("Judgment scope must be explicit")
         build(root, extra_judgment=stage)
         ident = commit_bundle(
-            root, stage, "judgments", "sol_judgment", args.owner, args.auditor_model
+            root, stage, "judgments", "judgment", args.owner, args.auditor_model
         )
         atomic_bytes(root / "review-queue.json", canonical(audit_queue(root)) + b"\n")
         return {"judgment_bundle": ident}
@@ -686,11 +686,13 @@ def parser():
         help="Persist another confirmed observatory coordinator root as overhead",
     )
     importer = commands.add_parser(
-        "import-judgments", help="Import reviewed, revisioned Sol judgments"
+        "import-judgments", help="Import reviewed, revisioned judgments"
     )
     importer.add_argument("--from-dir", required=True, type=Path)
     importer.add_argument("--owner", required=True)
-    importer.add_argument("--auditor-model", choices=["gpt-6.1-sol"], required=True)
+    importer.add_argument(
+        "--auditor-model", choices=["gpt-6.1-sol", "gpt-6.1-terra"], required=True
+    )
     commands.add_parser(
         "aggregate", help="Build an immutable generation without reading SQLite"
     )
