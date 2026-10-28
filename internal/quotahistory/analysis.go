@@ -16,9 +16,9 @@ var saoPaulo = func() *time.Location {
 }()
 
 type analysisOptions struct {
-	Now                                time.Time
-	Cadence, Period, Lookback, Horizon time.Duration
-	Recurrence                         bool
+	Now                                        time.Time
+	Cadence, MaxGap, Period, Lookback, Horizon time.Duration
+	Recurrence                                 bool
 }
 type deltaInterval struct {
 	From       time.Time `json:"from"`
@@ -128,7 +128,7 @@ func analyze(input []sample, o analysisOptions) analysis {
 	}
 	sort.SliceStable(samples, func(i, j int) bool { return samples[i].At.Before(samples[j].At) })
 	start := o.Now.Add(-o.Period)
-	maxGap := 2 * o.Cadence
+	maxGap := o.MaxGap
 	for i, s := range samples {
 		if s.At.After(o.Now) {
 			continue

@@ -24,7 +24,7 @@ import {
 import styles from "./Delegation.module.scss";
 
 export function DelegationPage() {
-  const { state, refresh } = useActivity("/delegation", parseDelegation);
+  const { state, refresh, refreshing } = useActivity("/delegation", parseDelegation);
   return (
     <div className={styles.page}>
       <header className={styles.heading}>
@@ -36,11 +36,13 @@ export function DelegationPage() {
           variant="secondary"
           size="sm"
           onClick={refresh}
-          disabled={state.status === "loading"}
+          disabled={state.status === "loading" || refreshing}
         >
           <IconRefreshCw size={15} /> Atualizar
         </Button>
       </header>
+      {refreshing && <p role="status">Atualizando…</p>}
+      {state.status === "ready" && state.refreshError && <div className="error-box" role="alert">{state.refreshError}</div>}
       {state.status === "loading" && (
         <p role="status">Carregando acompanhamento…</p>
       )}

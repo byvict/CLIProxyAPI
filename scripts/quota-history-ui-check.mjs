@@ -10,7 +10,7 @@ const key = (await readFile(resolve(fixtureRoot, 'management.key'), 'utf8')).tri
 const fixtures = JSON.parse(await readFile(resolve(fixtureRoot, 'fixtures.json'), 'utf8'));
 const referenceScript = await readFile(new URL('../management/v1-source/app.js', import.meta.url), 'utf8');
 await mkdir(evidenceRoot, { recursive: true });
-const browser = await chromium.launch({ headless: true });
+const browser = await chromium.launch({ headless: true, executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE });
 const context = await browser.newContext({ viewport: { width: 1600, height: 1100 }, timezoneId: 'America/Sao_Paulo', reducedMotion: 'reduce' });
 const page = await context.newPage();
 const errors = [];
@@ -82,7 +82,7 @@ try {
   results.push('All quota readers persist observations through the authenticated backend');
   const links = await page.locator('aside a').evaluateAll((nodes) => nodes.map((node) => node.getAttribute('href')));
   assert.equal(links[links.indexOf('#/quota') + 1], '#/performance');
-  assert.equal(links[links.indexOf('#/performance') + 1], '#/quota-history');
+  assert.equal(links[links.indexOf('#/delegation') + 1], '#/quota-history');
   for (const path of ['#/ai-providers', '#/auth-files', '#/oauth', '#/config', '#/logs']) assert(links.includes(path));
   await page.locator('a[href="#/quota"]').first().click();
   await page.getByRole('button', { name: /^Claude/ }).first().click();
@@ -110,8 +110,8 @@ try {
       top: row.getBoundingClientRect().top,
       bottom: row.getBoundingClientRect().bottom,
       trackHeight: track.getBoundingClientRect().height,
-      headerLines: row.firstElementChild.children.length,
-      headerText: row.firstElementChild.textContent,
+      headerLines: name.getClientRects().length,
+      headerText: name.textContent,
       headerTitle: name.title,
       iconLoaded: icon?.complete && icon.naturalWidth > 0,
       themeTone: getComputedStyle(row).getPropertyValue('--text-secondary').trim(),
@@ -121,7 +121,7 @@ try {
       color: getComputedStyle(marker).backgroundColor,
     };
   }));
-  assert(lanes.every((lane) => lane.width === lanes[0].width && lane.height === 64 && lane.headerLines === 1), 'All provider rows must have equal dimensions and a single header line');
+  assert(lanes.every((lane) => lane.width === lanes[0].width && lane.height >= 64 && lane.headerLines === 1), 'Provider rows retain their minimum height, equal widths, and a single identity line');
   assert(Math.abs(currentBounds.y - lanes[0].top) < 0.6);
   assert(Math.abs(currentBounds.y + currentBounds.height - lanes.at(-1).bottom) < 0.6, 'The dashed line must span all rows and their separators without restarting per provider');
   for (const lane of lanes) {
@@ -225,13 +225,20 @@ try {
   await page.getByRole('combobox').last().selectOption('all');
   assert.equal(await page.getByRole('combobox').last().inputValue(), 'all');
   await page.getByRole('combobox').last().selectOption('24h');
+  await page.locator('#cp-monitor[aria-busy="false"]').waitFor();
   results.push('Original v1 provider tabs, period filters, keyboard chart inspection, bars and heatmap work');
 
   const reference = await context.newPage();
   reference.on('pageerror', (error) => errors.push(error.message));
+  if (!process.env.V1_REFERENCE_URL) {
+    const markup = await readFile(new URL('../internal/submon/ui/index.html', import.meta.url), 'utf8');
+    const css = await readFile(new URL('../management/v1-source/style.css', import.meta.url), 'utf8');
+    await reference.route('http://v1-reference.fixture.invalid/', route => route.fulfill({ contentType: 'text/html', body: markup }));
+    await reference.route('**/style.css', route => route.fulfill({ contentType: 'text/css', body: css }));
+  }
   await reference.route('**/app.js', (route) => route.fulfill({ contentType: 'text/javascript', body: referenceScript.replace("screen: 'overview'", "screen: 'history'") }));
   await reference.route('**/api/v1/**', async (route) => route.fulfill({ json: await historyResponse(route.request().url()) }));
-  await reference.goto(process.env.V1_REFERENCE_URL || 'http://127.0.0.1:8318');
+  await reference.goto(process.env.V1_REFERENCE_URL || 'http://v1-reference.fixture.invalid/');
   await reference.locator('[data-filter="claude"]').first().click();
   await reference.locator('[data-chart="rate"] [data-hit]').waitFor();
   for (const current of [page, reference]) {

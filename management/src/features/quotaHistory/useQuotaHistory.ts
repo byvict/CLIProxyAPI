@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAuthStore, useQuotaStore } from '@/stores';
+import { apiClient } from '@/services/api/client';
 import { readQuotaHistory } from './api';
 import type { QuotaObservation } from './projection';
 
@@ -13,13 +14,17 @@ export function useQuotaHistory() {
   useEffect(() => {
     let active = true;
     let loading = false;
+    let dirty = false;
+    const client = apiClient.captureConnection();
+    const controller = new AbortController();
     setObservations([]);
     setError('');
     const load = async () => {
-      if (!connected || loading) return;
+      if (!connected || !active) return;
+      if (loading) { dirty = true; return; }
       loading = true;
       try {
-        const data = await readQuotaHistory();
+        const data = await readQuotaHistory(client, controller.signal);
         if (active) {
           setObservations(data);
           setError('');
@@ -28,6 +33,7 @@ export function useQuotaHistory() {
         if (active) setError(reason instanceof Error ? reason.message : String(reason));
       } finally {
         loading = false;
+        if (dirty && active) { dirty = false; void load(); }
       }
     };
     void load();
@@ -39,6 +45,7 @@ export function useQuotaHistory() {
     window.addEventListener('quota-history-error', failed);
     return () => {
       active = false;
+      controller.abort();
       window.clearInterval(timer);
       window.removeEventListener('quota-history-updated', load);
       window.removeEventListener('quota-history-error', failed);

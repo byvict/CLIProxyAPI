@@ -1,0 +1,92 @@
+[
+  {
+    "provider": "claude",
+    "gapMs": 2699999,
+    "accepted": true
+  },
+  {
+    "provider": "claude",
+    "gapMs": 2700000,
+    "accepted": true
+  },
+  {
+    "provider": "claude",
+    "gapMs": 2700001,
+    "accepted": false
+  },
+  {
+    "provider": "codex",
+    "gapMs": 2699999,
+    "accepted": true
+  },
+  {
+    "provider": "codex",
+    "gapMs": 2700000,
+    "accepted": true
+  },
+  {
+    "provider": "codex",
+    "gapMs": 2700001,
+    "accepted": false
+  },
+  {
+    "provider": "grok",
+    "gapMs": 2699999,
+    "accepted": true
+  },
+  {
+    "provider": "grok",
+    "gapMs": 2700000,
+    "accepted": true
+  },
+  {
+    "provider": "grok",
+    "gapMs": 2700001,
+    "accepted": false
+  },
+  {
+    "provider": "xai",
+    "gapMs": 2699999,
+    "accepted": true
+  },
+  {
+    "provider": "xai",
+    "gapMs": 2700000,
+    "accepted": true
+  },
+  {
+    "provider": "xai",
+    "gapMs": 2700001,
+    "accepted": false
+  },
+  {
+    "provider": "meta",
+    "gapMs": 3899999,
+    "accepted": true
+  },
+  {
+    "provider": "meta",
+    "gapMs": 3900000,
+    "accepted": true
+  },
+  {
+    "provider": "meta",
+    "gapMs": 3900001,
+    "accepted": false
+  },
+  {
+    "provider": "muse",
+    "gapMs": 3899999,
+    "accepted": true
+  },
+  {
+    "provider": "muse",
+    "gapMs": 3900000,
+    "accepted": true
+  },
+  {
+    "provider": "muse",
+    "gapMs": 3900001,
+    "accepted": false
+  }
+]

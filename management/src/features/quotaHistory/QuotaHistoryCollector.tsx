@@ -13,6 +13,7 @@ import { getQuotaCacheKey } from '@/utils/quota/identity';
 import { getStatusFromError } from '@/utils/quota';
 import { classifyQuotaFiles } from '@/features/quota/logic';
 import { QUOTA_ADAPTERS, getQuotaMap, getQuotaSetter } from '@/features/quota/providers';
+import { enrichQuotaInBackground } from '@/features/quota/quotaEnrichment';
 import { reserveQuotaPoll } from './api';
 
 // Reuse the official readers and session guards; no inference or token renewal.
@@ -43,8 +44,8 @@ export function QuotaHistoryCollector() {
             const adapter = QUOTA_ADAPTERS[type];
             const key = getQuotaCacheKey(file);
             const commit = (quota: ReturnType<typeof adapter.buildSuccessState>) => {
-              if (!current()) return;
-              commitIfQuotaCacheCurrent(cacheGeneration, () => {
+              if (!current()) return false;
+              return commitIfQuotaCacheCurrent(cacheGeneration, () => {
                 getQuotaSetter(adapter)((previous) => ({ ...previous, [key]: quota }));
               });
             };
@@ -57,9 +58,12 @@ export function QuotaHistoryCollector() {
               // An empty browser cache still needs its first reading after reopening.
               // Muse retains its persisted floor because its reader can mint a key.
               if (!claimed && (type === 'meta' || cached?.status === 'success')) return;
+              commit(adapter.buildLoadingState());
               const data = await adapter.fetchQuota(file, t);
-              commit(adapter.buildSuccessState(data));
+              const state = adapter.buildSuccessState(data);
+              if (commit(state)) void enrichQuotaInBackground(adapter, file, data, state, t);
             } catch (error: unknown) {
+              if (error instanceof DOMException && error.name === 'AbortError') return;
               const message = error instanceof Error ? error.message : t('common.unknown_error');
               commit(adapter.buildErrorState(message, getStatusFromError(error)));
               // Failed reads never create a synthetic balance. Gaps suspend projections.

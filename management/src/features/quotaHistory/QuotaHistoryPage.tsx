@@ -19,10 +19,10 @@ export function QuotaHistoryPage() {
     const client = apiClient.captureConnection();
     return mountV1History(
       shadow,
-      (path) => {
-        if (path === '/api/v1/snapshot') return client.get('/quota-history/snapshot');
+      (path, options) => {
+        if (path === '/api/v1/snapshot') return client.get('/quota-history/snapshot', { signal: options?.signal, timeout: 0 });
         if (path.startsWith('/api/v1/view?'))
-          return client.get('/quota-history/view?' + path.split('?')[1]);
+          return client.get('/quota-history/view?' + path.split('?')[1], { signal: options?.signal, timeout: 0 });
         return Promise.reject(new Error('Unsupported history request'));
       },
       () => window.dispatchEvent(new Event('quota-history-refresh'))

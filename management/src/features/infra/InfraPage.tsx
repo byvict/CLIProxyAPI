@@ -6,14 +6,14 @@ import { IconGithub } from '@/components/ui/icons';
 import { ProviderHeaderCard } from '@/features/providers/components/ProviderHeaderCard';
 import { apiClient } from '@/services/api/client';
 import { useAuthStore } from '@/stores';
-import { parseGitHub, useActivity } from '@/features/performance/api';
+import { invalidateActivity, parseGitHub, useActivity } from '@/features/performance/api';
 import pageStyles from '@/features/providers/ProvidersWorkbenchPage.module.scss';
 import categoryStyles from '@/features/providers/components/ProviderCategoryList.module.scss';
 import panelStyles from '@/features/providers/components/ProviderResourcePanel.module.scss';
 import styles from './Infra.module.scss';
 
 export function InfraPage() {
-  const { state, refresh } = useActivity('/infra/github', parseGitHub);
+  const { state, refresh, refreshing } = useActivity('/infra/github', parseGitHub);
   const apiBase = useAuthStore((store) => store.apiBase);
   const managementKey = useAuthStore((store) => store.managementKey);
   const [token, setToken] = useState('');
@@ -36,6 +36,7 @@ export function InfraPage() {
       await client.post('/infra/github', { token: token.trim() }, { timeout: 0 });
       if (revision === apiClient.getConnectionRevision()) {
         setToken('');
+        invalidateActivity('/infra/github');
         refresh();
       }
     } catch (cause) {
@@ -55,7 +56,7 @@ export function InfraPage() {
         updatedAtLabel=""
         showSummary={false}
         showNewAction={false}
-        isFetching={state.status === 'loading' || saving}
+        isFetching={state.status === 'loading' || refreshing || saving}
         onRefresh={refresh}
         onNew={() => {}}
       />
@@ -89,6 +90,7 @@ export function InfraPage() {
                     : 'Não conectado'}
             </span>
           </div>
+          {state.status === 'ready' && state.refreshError && <div className="error-box" role="alert">{state.refreshError}</div>}
           {state.status === 'error' && (
             <div className="error-box" role="alert">
               {state.message}

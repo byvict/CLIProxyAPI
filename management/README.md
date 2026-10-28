@@ -275,3 +275,37 @@ The fixture directory must contain `management.key` for that proxy. The checker 
 synthetic activity and GitHub responses. It verifies navigation order, all provider
 tabs, token coverage, connection validation, keyboard chart inspection, and mobile
 layout. Screenshots and `receipt.json` are saved in the evidence directory.
+
+### Loading and history policy
+
+Performance, Infra, and Delegation keep the last successful response for the current
+connection. Navigation within 60 seconds reuses it. Later navigation revalidates in
+the background, and manual refresh always requests current data. Identical in-flight
+reads are shared. Refresh errors leave the last result visible with an error message.
+GitHub loads when selected or opened in Infra. Saving its token invalidates pending reads.
+Logout and reconnection discard activity from the previous session.
+
+Quota readers publish each account as it completes. Claude profile and Codex
+subscription and reset-credit details enrich the successful balance afterward.
+Automatic, manual, and batch reads share a physical request and its history write.
+Reset mutations remain independent. A per-account read epoch rejects results from
+before a reset without clearing the displayed balance.
+
+Collection remains every 30 minutes. Both projection surfaces accept gaps and
+reading ages up to 45 minutes inclusive for Claude, Codex, and Grok, or 65 minutes
+for Muse, including their aliases. Sampling cadence and minimum evidence stay
+independent of those limits. Missing values, resets, increases, and future readings
+remain barriers. A longer accepted gap changes eligibility, not demonstrated precision.
+The shared boundary corpus is `tests/fixtures/quota-gaps.json`.
+
+History refreshes that overlap writes perform a trailing read. The generated v1
+runtime owns request cancellation and preserves the current charts on cancellation.
+It still resolves a fresh snapshot before the selected view. SQL reads the requested
+period with one predecessor per credential, window, and period. The bounded
+query also retains every historical series and the first identity row, so renamed
+historical providers keep their original labels. There is no server cache.
+
+Run `scripts/data-loading-ui-check.mjs <management-build> <evidence-root>` with
+`PLAYWRIGHT_MODULE` set to exercise synthetic delayed providers, quota coalescing,
+activity navigation and refresh errors, GitHub token replacement, history trailing
+reads, cancellation, and reconnection against the production artifact.

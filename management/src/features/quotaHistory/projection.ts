@@ -38,10 +38,10 @@ export type QuotaProjection =
       band: ProjectionBand;
     });
 
-export const MAX_SAMPLE_GAP_MS = 15 * 60 * 1000;
+export const MAX_SAMPLE_GAP_MS = 45 * 60 * 1000;
 
 export const maxSampleGapMs = (provider: string) =>
-  provider === 'meta' ? 65 * 60_000 : MAX_SAMPLE_GAP_MS;
+  (provider === 'meta' || provider === 'muse') ? 65 * 60_000 : MAX_SAMPLE_GAP_MS;
 
 export function projectionBand(offsetMs: number): ProjectionBand {
   const distance = Math.abs(offsetMs) / HOUR_MS;

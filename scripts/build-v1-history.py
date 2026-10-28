@@ -43,13 +43,14 @@ prefix = '''export function mountV1History(shadow, request, refresh) {
   let snapshot = null, view = null, committedSelection = null, connectionError = '';
   let authenticated = true, requestVersion = 0, sessionGeneration = 0;
   let pendingUpdate = null, pendingError = '', pausedAt = null, toastTimer;
-  let alive = true;
+  let alive = true, loadController = new AbortController();
+  let refreshing = false, dirty = false;
   const events = new AbortController();
 '''
 prefix += script[script.index("  const esc ="):script.index("  async function api(")]
 prefix += '''
   async function api(path, options = {}, version = null) {
-    const response = await request(path, options);
+    const response = await request(path, {...options, signal: loadController.signal});
     if (!alive || (version !== null && version !== requestVersion)) throw new DOMException('Consulta substituída.', 'AbortError');
     return response;
   }
@@ -63,6 +64,10 @@ parts = []
 for name in names:
     body = function(name)
     body = body.replace("document.getElementById", "elementById").replace("document.activeElement", "focused()")
+    if name == "load":
+        body = body.replace("const version = ++requestVersion;", "loadController.abort(); loadController = new AbortController();\n    const version = ++requestVersion; refreshing = true;")
+        body = body.replace("finally { if (version === requestVersion) root.setAttribute('aria-busy', 'false'); }", "finally { if (version === requestVersion) { root.setAttribute('aria-busy', 'false'); refreshing = false; if (dirty && alive) { dirty = false; void updated(); } } }")
+        body = body.replace("if (!snapshot || !view || JSON.stringify(requested) !== JSON.stringify(committedSelection)) render();", "if (!snapshot || !view) render();\n    else if (committedSelection) Object.assign(state, committedSelection);")
     if name == "header":
         body = body.replace("history: ['Histórico de consumo'", "history: ['Quota History'")
         body = body.replace("Fontes nativas · Histórico local", "Credenciais do proxy · Histórico local")
@@ -107,7 +112,12 @@ suffix = '''
     const closingFocusedSummary = details.tagName === 'DETAILS' && !details.open && !screen.querySelector('details[open]') && focused() === details.querySelector('summary');
     flushPending(closingFocusedSummary);
   }, {capture: true, signal: events.signal});
-  const updated = () => { if (alive) void load(true); };
+  const updated = async () => {
+    if (!alive) return;
+    if (refreshing) { dirty = true; return; }
+    dirty = false;
+    await load(true);
+  };
   window.addEventListener('quota-history-updated', updated);
   const timer = setInterval(updated, 30000);
   void load();
@@ -116,6 +126,7 @@ suffix = '''
     requestVersion++;
     sessionGeneration++;
     events.abort();
+    loadController.abort();
     observer.disconnect();
     clearInterval(timer);
     clearTimeout(toastTimer);

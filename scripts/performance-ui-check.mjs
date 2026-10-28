@@ -8,7 +8,7 @@ if (!origin || !fixtureRoot || !evidenceRoot) throw new Error('Usage: performanc
 const { chromium } = await import(pathToFileURL(resolve(process.env.PLAYWRIGHT_MODULE || 'node_modules/playwright/index.mjs')).href);
 const key = (await readFile(resolve(fixtureRoot, 'management.key'), 'utf8')).trim();
 await mkdir(evidenceRoot, { recursive: true });
-const browser = await chromium.launch({ headless: true });
+const browser = await chromium.launch({ headless: true, executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE });
 const context = await browser.newContext({ viewport: { width: 1500, height: 1650 }, timezoneId: 'America/Sao_Paulo', reducedMotion: 'reduce' });
 const page = await context.newPage();
 const errors = [];
@@ -32,6 +32,7 @@ try {
     localStorage.setItem('cli-proxy-language', JSON.stringify({ state: { language: 'en' }, version: 0 }));
     localStorage.setItem('cli-proxy-theme', JSON.stringify({ state: { theme: 'dark' }, version: 0 }));
   });
+  await page.route('**/v8/management/requests/api-call', route => route.fulfill({ status: 503, json: { error: 'Provider calls disabled in this UI fixture' } }));
   await page.route('**/v8/management/performance', (route) => route.fulfill(performanceMode === 'error' ? { status: 503, json: { error: 'Activity source unavailable' } } : { json: performanceMode === 'unavailable' ? { status: 'unavailable' } : { status: 'ready', activity } }));
   await page.route('**/v8/management/infra/github', async (route) => {
     if (route.request().method() === 'POST') {
@@ -95,6 +96,7 @@ try {
   githubState = { status: 'disconnected' };
   await page.locator('a[href="#/performance"]').first().click();
   await page.getByRole('button', { name: 'GitHub', exact: true }).click();
+  await page.getByRole('button', { name: 'Atualizar', exact: true }).click();
   await page.getByRole('link', { name: 'Conectar GitHub →', exact: true }).click();
   await page.getByRole('heading', { name: 'Conectar com token', exact: true }).waitFor();
   report.push('Disconnected calendar leads directly to Infra.');
@@ -115,12 +117,13 @@ try {
   performanceMode = 'unavailable';
   await page.locator('button.mobile-menu-btn').click();
   await page.locator('a[href="#/performance"]').first().click();
+  await page.getByRole('button', { name: 'Atualizar', exact: true }).click();
   await page.getByText('Nenhum histórico T3code disponível neste servidor.', { exact: false }).waitFor();
   performanceMode = 'error';
   await page.getByRole('button', { name: 'Atualizar', exact: true }).click();
   await page.getByRole('alert').filter({ hasText: 'Activity source unavailable' }).waitFor();
   performanceMode = 'ready';
-  await page.getByRole('button', { name: 'Tentar novamente', exact: true }).click();
+  await page.getByRole('button', { name: 'Atualizar', exact: true }).click();
   await page.getByRole('img', { name: `Calendário de tokens em ${year}` }).waitFor();
   report.push('Missing local history, read failure, and retry recovery remain distinct states.');
   assert.deepEqual(errors, []);

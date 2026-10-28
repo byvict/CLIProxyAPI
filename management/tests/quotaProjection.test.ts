@@ -74,7 +74,7 @@ describe('symmetric exhaustion bands around reset', () => {
   });
   test('excludes gaps, resets and adjustments and reports partial coverage', () => {
     const complete = samples(12, 1);
-    const gap = [...complete.slice(0, 12), ...complete.slice(18)];
+    const gap = [...complete.slice(0, 12), ...complete.slice(24)];
     const projection = quotaProjection(gap, now);
     expect(projection.status).toBe('projected');
     if (projection.status !== 'projected') throw new Error('Expected a projection');

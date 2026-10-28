@@ -160,3 +160,12 @@ describe('quota history', () => {
     expect(markup).toContain('Provisional');
   });
 });
+
+test('timeline preserves the successful windows during refresh and error', () => {
+  const success = { status: 'success', windows: [{ id: 'weekly', usedPercent: 50, periodHours: 168, resetAtMs: now + hour }] };
+  const base = { provider: 'codex', name: 'fixture', displayName: 'Fixture', maxPeriodHours: 14 * 24 };
+  const expected = buildTimelineLane({ ...base, quota: success });
+  for (const status of ['loading', 'error']) {
+    expect(buildTimelineLane({ ...base, quota: { status, retained: success } })).toEqual(expected);
+  }
+});

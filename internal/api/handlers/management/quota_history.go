@@ -39,9 +39,22 @@ func (h *Handler) GetQuotaHistory(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"observations": observations})
 }
 
-func (h *Handler) quotaHistoryViewData(c *gin.Context) ([]quotahistory.Observation, quotahistory.Snapshot, time.Time, bool) {
+func (h *Handler) quotaHistoryViewData(c *gin.Context, period time.Duration) ([]quotahistory.Observation, quotahistory.Snapshot, time.Time, bool) {
 	now := time.Now()
-	observations, err := quotahistory.Read(c.Request.Context(), h.quotaHistoryPath(), 0, now.UnixMilli())
+	since := now.UnixMilli()
+	if period > 0 {
+		since = now.Add(-period).UnixMilli()
+	}
+	if period < 0 {
+		since = 0
+	}
+	var observations, metadata []quotahistory.Observation
+	var err error
+	if period == 0 {
+		metadata, err = quotahistory.ReadSnapshot(c.Request.Context(), h.quotaHistoryPath(), now.UnixMilli())
+	} else {
+		observations, metadata, err = quotahistory.ReadView(c.Request.Context(), h.quotaHistoryPath(), since, now.UnixMilli())
+	}
 	if err != nil {
 		log.WithError(err).Error("read quota history view")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not read quota history"})
@@ -58,11 +71,11 @@ func (h *Handler) quotaHistoryViewData(c *gin.Context) ([]quotahistory.Observati
 		}
 	}
 	c.Header("Cache-Control", "no-store")
-	return observations, quotahistory.MakeSnapshot(observations, credentials, now), now, true
+	return observations, quotahistory.MakeSnapshot(metadata, credentials, now), now, true
 }
 
 func (h *Handler) GetQuotaHistorySnapshot(c *gin.Context) {
-	_, snapshot, _, ok := h.quotaHistoryViewData(c)
+	_, snapshot, _, ok := h.quotaHistoryViewData(c, 0)
 	if ok {
 		c.JSON(http.StatusOK, snapshot)
 	}
@@ -76,7 +89,11 @@ func (h *Handler) GetQuotaHistoryView(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid quota history period"})
 		return
 	}
-	observations, snapshot, now, ok := h.quotaHistoryViewData(c)
+	readPeriod := period
+	if all {
+		readPeriod = -1
+	}
+	observations, snapshot, now, ok := h.quotaHistoryViewData(c, readPeriod)
 	if ok {
 		if all {
 			period = 24 * time.Hour

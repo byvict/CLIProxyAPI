@@ -164,6 +164,13 @@ func cadenceFor(provider string) time.Duration {
 	return 5 * time.Minute
 }
 
+func maxGapFor(provider string) time.Duration {
+	if provider == "muse" || provider == "meta" {
+		return 65 * time.Minute
+	}
+	return 45 * time.Minute
+}
+
 func MakeSnapshot(observations []Observation, credentials []Credential, now time.Time) Snapshot {
 	accounts := map[string]*accountView{}
 	for _, credential := range credentials {
@@ -198,7 +205,7 @@ func MakeSnapshot(observations []Observation, credentials []Credential, now time
 	for _, account := range accounts {
 		for _, s := range latest[account.ID] {
 			freshness := "fresh"
-			if now.Sub(s.At) > 2*cadenceFor(account.Provider) {
+			if now.Sub(s.At) > maxGapFor(account.Provider) {
 				freshness = "stale"
 			}
 			w := historyWindow{windowReading: s.Window, ID: s.Window.Key.id(), Current: account.Active && !strings.HasPrefix(s.Window.Key.Scope, "v1:"), Freshness: freshness, ObservedAt: s.At}
@@ -281,7 +288,7 @@ func MakeView(observations []Observation, snapshot Snapshot, provider, accountID
 					}
 				}
 			}
-			result := analyze(samples, analysisOptions{Now: now, Cadence: cadenceFor(provider), Period: period, Lookback: time.Hour})
+			result := analyze(samples, analysisOptions{Now: now, Cadence: cadenceFor(provider), MaxGap: maxGapFor(provider), Period: period, Lookback: time.Hour})
 			view.Groups = append(view.Groups, historyGroup{Key: window.Key, Label: window.Label, Total: totalFor(account.ID, window.Remaining), Accounts: []accountAnalysis{{analysis: result, AccountID: account.ID, WindowID: window.ID, Label: account.Identity.Label, Freshness: window.Freshness}}})
 		}
 	}

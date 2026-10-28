@@ -1,5 +1,5 @@
 import { apiClient } from '@/services/api/client';
-import { captureQuotaCacheGeneration, commitIfQuotaCacheCurrent } from '@/stores';
+import { captureQuotaCacheGeneration, commitIfQuotaCacheCurrent, useQuotaStore } from '@/stores';
 import { normalizeAuthIndex } from '@/utils/authIndex';
 import type { QuotaAdapter } from '@/features/quota/providers';
 import type { AuthFileItem } from '@/types';
@@ -7,36 +7,69 @@ import { recordQuotaHistory } from './api';
 import { quotaObservations } from './observations';
 
 export function withQuotaHistory(adapter: QuotaAdapter): QuotaAdapter {
-  const wrap =
-    (read: QuotaAdapter['fetchQuota']): QuotaAdapter['fetchQuota'] =>
-    async (file, t) => {
-      const client = apiClient.captureConnection();
-      const generation = captureQuotaCacheGeneration(file.name);
-      const data = await read(file, t);
-      if (commitIfQuotaCacheCurrent(generation, () => {})) {
-        void persist(file, adapter.buildSuccessState(data), client);
-      }
-      return data;
-    };
-  const persist = async (
-    file: AuthFileItem,
-    quota: ReturnType<QuotaAdapter['buildSuccessState']>,
-    client: ReturnType<typeof apiClient.captureConnection>
-  ) => {
-    const identity = normalizeAuthIndex(file.authIndex);
-    if (!identity) return;
-    const observations = quotaObservations(identity, adapter.type, quota, Date.now());
-    if (!observations.length) return;
-    try {
-      await recordQuotaHistory(identity, observations, client);
-      window.dispatchEvent(new Event('quota-history-updated'));
-    } catch {
-      window.dispatchEvent(new Event('quota-history-error'));
-    }
+  const inflight = new Map<string, Promise<unknown>>();
+  const enrichments = new Map<string, { data: unknown; promise: Promise<unknown> }>();
+  const identity = (file: AuthFileItem) => JSON.stringify([
+    adapter.type, file.name, normalizeAuthIndex(file.auth_index ?? file.authIndex),
+  ]);
+  const keyFor = (file: AuthFileItem) => {
+    const generation = captureQuotaCacheGeneration(file.name);
+    return JSON.stringify([apiClient.getConnectionRevision(), generation.cacheGeneration,
+      generation.fileGenerations[file.name] ?? 0, identity(file)]);
   };
+  const wrap = (read: QuotaAdapter['fetchQuota'], reset = false): QuotaAdapter['fetchQuota'] =>
+    (file, t) => {
+      if (reset) useQuotaStore.setState((state) => ({
+        fileGenerations: { ...state.fileGenerations, [file.name]: (state.fileGenerations[file.name] ?? 0) + 1 },
+      }));
+      const key = keyFor(file);
+      const existing = !reset && inflight.get(key);
+      if (existing) return existing;
+      const client = apiClient.captureConnection();
+      const current = () => keyFor(file) === key;
+      const promise = (async () => {
+        const data = await read(file, t, client);
+        if (!current()) throw new DOMException('Quota read superseded', 'AbortError');
+        const authIndex = normalizeAuthIndex(file.auth_index ?? file.authIndex);
+        if (authIndex) {
+          const observations = quotaObservations(authIndex, adapter.type, adapter.buildSuccessState(data), Date.now());
+          if (observations.length) {
+            try {
+              await recordQuotaHistory(authIndex, observations, client);
+              if (current()) window.dispatchEvent(new Event('quota-history-updated'));
+            } catch {
+              if (current()) window.dispatchEvent(new Event('quota-history-error'));
+            }
+          }
+        }
+        if (!current()) throw new DOMException('Quota read superseded', 'AbortError');
+        return data;
+      })();
+      if (!reset) {
+        inflight.set(key, promise);
+        void promise.finally(() => { if (inflight.get(key) === promise) inflight.delete(key); }).catch(() => {});
+      }
+      return promise;
+    };
   return {
     ...adapter,
     fetchQuota: wrap(adapter.fetchQuota),
-    ...(adapter.resetQuota ? { resetQuota: wrap(adapter.resetQuota) } : {}),
+    ...(adapter.enrichQuota ? {
+      enrichQuota: (file, data, t) => {
+        const key = keyFor(file);
+        const existing = enrichments.get(key);
+        if (existing && existing.data === data) return existing.promise;
+        const generation = captureQuotaCacheGeneration(file.name);
+        const client = apiClient.captureConnection();
+        const promise = Promise.resolve(adapter.enrichQuota?.(file, data, t, client)).then((enriched) => {
+          if (keyFor(file) !== key || !commitIfQuotaCacheCurrent(generation, () => {})) return data;
+          return enriched;
+        });
+        enrichments.set(key, { data, promise });
+        void promise.finally(() => { if (enrichments.get(key)?.promise === promise) enrichments.delete(key); }).catch(() => {});
+        return promise;
+      },
+    } : {}),
+    ...(adapter.resetQuota ? { resetQuota: wrap(adapter.resetQuota, true) } : {}),
   };
 }

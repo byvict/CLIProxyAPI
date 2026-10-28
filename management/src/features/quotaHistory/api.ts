@@ -23,8 +23,8 @@ function isObservation(value: unknown): value is QuotaObservation {
   );
 }
 
-export async function readQuotaHistory(): Promise<QuotaObservation[]> {
-  const response: unknown = await apiClient.get('/quota-history?period=30d');
+export async function readQuotaHistory(client = apiClient, signal?: AbortSignal): Promise<QuotaObservation[]> {
+  const response: unknown = await client.get('/quota-history?period=30d', { signal, timeout: 0 });
   if (
     !isRecord(response) ||
     !Array.isArray(response.observations) ||

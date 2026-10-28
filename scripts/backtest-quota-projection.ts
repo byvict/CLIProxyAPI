@@ -24,6 +24,7 @@ const rows = db
   .all();
 db.close();
 const hour = 3_600_000;
+const outcomeGapMs = (provider: string) => ['meta', 'muse'].includes(provider) ? 65 * 60_000 : 45 * 60_000;
 const groups = new Map<string, QuotaObservation[]>();
 for (const row of rows) {
   const key = JSON.stringify([row.credential, row.windowId, row.periodHours]);
@@ -57,6 +58,7 @@ function cycleRate(past: QuotaObservation[], last: QuotaObservation) {
   }
   return observed >= hour ? consumed / (observed / hour) : null;
 }
+const eligibility = { origins: 0, legacy: 0, proposed: 0, newlyEligible: 0, suppressed: 0, originsWithOutcome: 0 };
 const buckets = new Map<
   string,
   {
@@ -87,17 +89,23 @@ for (const group of groups.values()) {
     const old = baseline.quotaProjection(past, now);
     const current = quotaProjection(past, now);
     const rates = {
-      legacy: old.status === 'projected' ? old.ratePpH : old.status === 'no-consumption' ? 0 : null,
+      legacy: 'ratePpH' in old && old.status !== 'unstable' ? old.ratePpH : null,
       cycle: cycleRate(past, last),
       proposed: 'ratePpH' in current && current.status !== 'unstable' ? current.ratePpH : null,
     };
+    eligibility.origins++;
+    if (rates.legacy !== null) eligibility.legacy++;
+    if (rates.proposed !== null) eligibility.proposed++;
+    if (rates.legacy === null && rates.proposed !== null) eligibility.newlyEligible++;
+    if (rates.legacy !== null && rates.proposed === null) eligibility.suppressed++;
+    let hasOutcome = false;
     for (const horizon of [6, 24]) {
       const target = group.slice(index + 1).find((s) => s.observedAtMs >= now + horizon * hour);
       if (
         !target ||
         target.remaining === null ||
         target.resetAtMs === null ||
-        target.observedAtMs - now - horizon * hour > maxSampleGapMs(last.provider) ||
+        target.observedAtMs - now - horizon * hour > outcomeGapMs(last.provider) ||
         target.observedAtMs >= last.resetAtMs ||
         Math.abs(target.resetAtMs - last.resetAtMs) > 60_000
       )
@@ -113,6 +121,8 @@ for (const group of groups.values()) {
         return same;
       });
       if (!uninterruptedCycle) continue;
+      if (!hasOutcome) eligibility.originsWithOutcome++;
+      hasOutcome = true;
       const key = `${last.provider}:${horizon}h`;
       const bucket = buckets.get(key) ?? {
         candidates: 0,
@@ -160,9 +170,10 @@ console.log(
   JSON.stringify(
     {
       methodology:
-        'Hourly origins; actual observations within the maximum allowed sample-gap tolerance of 6h/24h; no future inputs; same cycle without replenishment; identical eligible cases for all methods. Positive signed error overestimates remaining quota.',
+        'Hourly origins; actual observations within a fixed 45-minute tolerance (65 for Muse) of 6h/24h; no future inputs; same cycle without replenishment; identical eligible cases for all methods. Positive signed error overestimates remaining quota.',
       limitations:
         'Overlapping predictions are correlated. Historical collection gaps and rounded balances limit inference. Suppression changes availability. This is descriptive validation, not calibration or a confidence interval.',
+      eligibility,
       results,
     },
     null,

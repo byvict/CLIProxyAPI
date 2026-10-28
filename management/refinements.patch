@@ -1680,3 +1680,805 @@ diff --git a/src/features/quota/QuotaPage.tsx b/src/features/quota/QuotaPage.tsx
        </section>
      </div>
    );
+diff --git a/src/features/quota/providers/types.ts b/src/features/quota/providers/types.ts
+--- a/src/features/quota/providers/types.ts
++++ b/src/features/quota/providers/types.ts
+@@ -1,9 +1,5 @@
+-/**
+- * 额度提供商数据层契约。
+- *
+- * data.ts 模块只做「取数 + 状态构造」：不 import React、不 import SCSS，
+- * 因此可以被 bun:test 纯逻辑测试直接消费。渲染由同目录的 *QuotaBody 组件承担。
+- */
++import { apiClient } from '@/services/api/client';
++/** Provider readers and state constructors stay independent of React and styles. */
+ 
+ import type { TFunction } from 'i18next';
+ import type {
+@@ -23,7 +19,7 @@
+ export type QuotaProviderType =
+   'antigravity' | 'claude' | 'codex' | 'devin' | 'kimi' | 'meta' | 'plugin' | 'xai';
+ 
+-/** useQuotaStore 的结构契约（storeSelector/storeSetter 依赖）。 */
++/** Store shape used by quota adapters. */
+ export interface QuotaStore {
+   antigravityQuota: Record<string, AntigravityQuotaState>;
+   claudeQuota: Record<string, ClaudeQuotaState>;
+@@ -48,10 +44,10 @@
+   type: QuotaProviderType;
+   i18nPrefix: string;
+   filterFn: (file: AuthFileItem) => boolean;
+-  fetchQuota: (file: AuthFileItem, t: TFunction) => Promise<TData>;
++  fetchQuota: (file: AuthFileItem, t: TFunction, client?: ReturnType<typeof apiClient.captureConnection>) => Promise<TData>;
+   /** Optional details loaded only after the primary quota has been committed. */
+-  enrichQuota?: (file: AuthFileItem, data: TData, t: TFunction) => Promise<TData>;
+-  resetQuota?: (file: AuthFileItem, t: TFunction) => Promise<TData>;
++  enrichQuota?: (file: AuthFileItem, data: TData, t: TFunction, client?: ReturnType<typeof apiClient.captureConnection>) => Promise<TData>;
++  resetQuota?: (file: AuthFileItem, t: TFunction, client?: ReturnType<typeof apiClient.captureConnection>) => Promise<TData>;
+   canResetQuota?: (quota: TState) => boolean;
+   storeSelector: (state: QuotaStore) => Record<string, TState>;
+   storeSetter: keyof QuotaStore;
+diff --git a/src/features/quota/providers/index.ts b/src/features/quota/providers/index.ts
+--- a/src/features/quota/providers/index.ts
++++ b/src/features/quota/providers/index.ts
+@@ -1,3 +1,4 @@
++import { apiClient } from '@/services/api/client';
+ /** Provider adapters combine quota readers and their existing card bodies. */
+ 
+ import type { ComponentType } from 'react';
+@@ -29,15 +30,16 @@
+   status: 'idle' | 'loading' | 'success' | 'error';
+   error?: string;
+   errorStatus?: number;
++  retained?: QuotaCardState;
+ }
+ 
+ export interface QuotaAdapter {
+   type: QuotaProviderType;
+   i18nPrefix: string;
+   filterFn: (file: AuthFileItem) => boolean;
+-  fetchQuota: (file: AuthFileItem, t: TFunction) => Promise<unknown>;
+-  enrichQuota?: (file: AuthFileItem, data: unknown, t: TFunction) => Promise<unknown>;
+-  resetQuota?: (file: AuthFileItem, t: TFunction) => Promise<unknown>;
++  fetchQuota: (file: AuthFileItem, t: TFunction, client?: ReturnType<typeof apiClient.captureConnection>) => Promise<unknown>;
++  enrichQuota?: (file: AuthFileItem, data: unknown, t: TFunction, client?: ReturnType<typeof apiClient.captureConnection>) => Promise<unknown>;
++  resetQuota?: (file: AuthFileItem, t: TFunction, client?: ReturnType<typeof apiClient.captureConnection>) => Promise<unknown>;
+   canResetQuota?: (quota: QuotaCardState) => boolean;
+   storeSelector: (state: QuotaStore) => Record<string, QuotaCardState>;
+   storeSetter: keyof QuotaStore;
+@@ -67,7 +69,20 @@
+ 
+ /** Read the store setter without creating a subscription. */
+ export const getQuotaSetter = (adapter: QuotaAdapter): QuotaMapUpdater =>
+-  useQuotaStore.getState()[adapter.storeSetter] as unknown as QuotaMapUpdater;
++  (updater) => {
++    const setter = useQuotaStore.getState()[adapter.storeSetter] as unknown as QuotaMapUpdater;
++    setter((previous) => {
++      const next = updater(previous);
++      for (const [key, quota] of Object.entries(next)) {
++        const old = previous[key];
++        if (quota !== old && (quota.status === 'loading' || quota.status === 'error')) {
++          const retained = old?.status === 'success' ? old : old?.retained;
++          if (retained) next[key] = { ...quota, retained };
++        }
++      }
++      return next;
++    });
++  };
+ 
+ /** Read the current provider quota cache without subscribing. */
+ export const getQuotaMap = (adapter: QuotaAdapter): Record<string, QuotaCardState> =>
+diff --git a/src/services/api/apiCall.ts b/src/services/api/apiCall.ts
+--- a/src/services/api/apiCall.ts
++++ b/src/services/api/apiCall.ts
+@@ -77,8 +77,8 @@
+ };
+ 
+ export const apiCallApi = {
+-  request: async (payload: ApiCallRequest, config?: AxiosRequestConfig): Promise<ApiCallResult> => {
+-    const response = await apiClient.post<Record<string, unknown>>(
++  request: async (payload: ApiCallRequest, config?: AxiosRequestConfig, client = apiClient): Promise<ApiCallResult> => {
++    const response = await client.post<Record<string, unknown>>(
+       '/requests/api-call',
+       payload,
+       config
+diff --git a/src/services/api/authFiles.ts b/src/services/api/authFiles.ts
+--- a/src/services/api/authFiles.ts
++++ b/src/services/api/authFiles.ts
+@@ -578,8 +578,8 @@
+     return normalizeAuthFileRefreshResults(response);
+   },
+ 
+-  resetCooldown: (authIndex: string) =>
+-    apiClient.post<AuthFileCooldownResetResponse>('/routing/cooldown/reset', {
++  resetCooldown: (authIndex: string, client = apiClient) =>
++    client.post<AuthFileCooldownResetResponse>('/routing/cooldown/reset', {
+       auth_index: authIndex,
+     }),
+ 
+@@ -613,8 +613,8 @@
+ 
+   deleteAll: () => apiClient.delete('/credentials', { params: { all: true } }),
+ 
+-  download: async (name: string): Promise<Blob> => {
+-    const response = await apiClient.getRaw(
++  download: async (name: string, client = apiClient): Promise<Blob> => {
++    const response = await client.getRaw(
+       `/credentials/download?name=${encodeURIComponent(name)}`,
+       {
+         responseType: 'blob',
+@@ -623,8 +623,8 @@
+     return response.data as Blob;
+   },
+ 
+-  downloadText: async (name: string): Promise<string> => {
+-    const blob = await authFilesApi.download(name);
++  downloadText: async (name: string, client = apiClient): Promise<string> => {
++    const blob = await authFilesApi.download(name, client);
+     return blob.text();
+   },
+ 
+diff --git a/src/features/quota/providers/claude/data.ts b/src/features/quota/providers/claude/data.ts
+--- a/src/features/quota/providers/claude/data.ts
++++ b/src/features/quota/providers/claude/data.ts
+@@ -1,3 +1,4 @@
++import { apiClient } from '@/services/api/client';
+ /**
+  * Claude quota data: plan windows, extra usage, and independent dollar balances.
+  * React-free and SCSS-free so fixture tests can consume the data layer directly.
+@@ -182,33 +183,17 @@
+   return null;
+ };
+ 
+-const fetchClaudeQuota = async (file: AuthFileItem, t: TFunction): Promise<ClaudeQuotaData> => {
++const fetchClaudeQuota = async (file: AuthFileItem, t: TFunction, client = apiClient.captureConnection()): Promise<ClaudeQuotaData> => {
+   const rawAuthIndex = file['auth_index'] ?? file.authIndex;
+   const authIndex = normalizeAuthIndex(rawAuthIndex);
+   if (!authIndex) {
+     throw new Error(t('claude_quota.missing_auth_index'));
+   }
+ 
+-  const [usageResult, profileResult] = await Promise.allSettled([
+-    apiCallApi.request({
+-      authIndex,
+-      method: 'GET',
+-      url: CLAUDE_USAGE_URL,
+-      header: { ...CLAUDE_REQUEST_HEADERS, Accept: 'application/json' },
+-    }),
+-    apiCallApi.request({
+-      authIndex,
+-      method: 'GET',
+-      url: CLAUDE_PROFILE_URL,
+-      header: { ...CLAUDE_REQUEST_HEADERS },
+-    }),
+-  ]);
+-
+-  if (usageResult.status === 'rejected') {
+-    throw usageResult.reason;
+-  }
+-
+-  const result = usageResult.value;
++  const result = await apiCallApi.request({
++    authIndex, method: 'GET', url: CLAUDE_USAGE_URL,
++    header: { ...CLAUDE_REQUEST_HEADERS, Accept: 'application/json' },
++  }, undefined, client);
+ 
+   if (result.statusCode < 200 || result.statusCode >= 300) {
+     throw createStatusError(getApiCallErrorMessage(result), result.statusCode);
+@@ -230,21 +215,13 @@
+       window.id !== 'cloud-session-credits' ||
+       !dollarWindows.some((balance) => balance.key === 'iguana_necktie')
+   );
+-  const planType =
+-    profileResult.status === 'fulfilled' &&
+-    profileResult.value.statusCode >= 200 &&
+-    profileResult.value.statusCode < 300
+-      ? resolveClaudePlanType(
+-          parseClaudeProfilePayload(profileResult.value.body ?? profileResult.value.bodyText)
+-        )
+-      : null;
+ 
+   return {
+     windows,
+     extraUsage: snapshot.extraUsage,
+     dollarWindows,
+     observedAt: new Date().toISOString(),
+-    planType,
++    planType: null,
+   };
+ };
+ 
+@@ -253,6 +230,16 @@
+   i18nPrefix: 'claude_quota',
+   filterFn: (file) => isClaudeFile(file) && !isDisabledAuthFile(file),
+   fetchQuota: fetchClaudeQuota,
++  enrichQuota: async (file, data, _t, client = apiClient.captureConnection()) => {
++    const authIndex = normalizeAuthIndex(file.auth_index ?? file.authIndex);
++    if (!authIndex) return data;
++    const result = await apiCallApi.request({
++      authIndex, method: 'GET', url: CLAUDE_PROFILE_URL, header: { ...CLAUDE_REQUEST_HEADERS },
++    }, undefined, client);
++    if (result.statusCode < 200 || result.statusCode >= 300) return data;
++    const planType = resolveClaudePlanType(parseClaudeProfilePayload(result.body ?? result.bodyText));
++    return planType ? { ...data, planType } : data;
++  },
+   storeSelector: (state) => state.claudeQuota,
+   storeSetter: 'setClaudeQuota',
+   buildLoadingState: () => ({ status: 'loading', windows: [] }),
+diff --git a/src/features/quota/providers/codex/data.ts b/src/features/quota/providers/codex/data.ts
+--- a/src/features/quota/providers/codex/data.ts
++++ b/src/features/quota/providers/codex/data.ts
+@@ -1,6 +1,7 @@
++import { apiClient } from '@/services/api/client';
+ /**
+- * Codex 额度数据层：用量窗口 + 套餐 + 重置积分（含消费流程）。
+- * React-free / SCSS-free —— 由 tests/codexQuota.test.ts 直接消费。
++ * Codex quota windows, plan metadata, and reset credits.
++ * Independent of React and styles for data-layer tests.
+  */
+ 
+ import type { TFunction } from 'i18next';
+@@ -338,7 +339,8 @@
+ const fetchCodexSubscriptionActiveUntil = async (
+   authIndex: string,
+   accountId: string | null,
+-  requestHeader: Record<string, string>
++  requestHeader: Record<string, string>,
++  client: ReturnType<typeof apiClient.captureConnection>
+ ): Promise<string | number | null> => {
+   if (!accountId) return null;
+ 
+@@ -350,7 +352,7 @@
+         url: `${CODEX_SUBSCRIPTION_URL}?account_id=${encodeURIComponent(accountId)}`,
+         header: requestHeader,
+       },
+-      { timeout: CODEX_OPTIONAL_REQUEST_TIMEOUT_MS }
++      { timeout: CODEX_OPTIONAL_REQUEST_TIMEOUT_MS }, client
+     );
+     if (result.statusCode < 200 || result.statusCode >= 300) return null;
+     return parseCodexSubscriptionActiveUntil(result.body ?? result.bodyText);
+@@ -362,7 +364,8 @@
+ const fetchCodexResetCredits = async (
+   authIndex: string,
+   requestHeader: Record<string, string>,
+-  t: TFunction
++  t: TFunction,
++  client: ReturnType<typeof apiClient.captureConnection>
+ ): Promise<CodexResetCreditsData> => {
+   try {
+     const result = await apiCallApi.request(
+@@ -377,7 +380,7 @@
+           Originator: 'Codex Desktop',
+         },
+       },
+-      { timeout: CODEX_OPTIONAL_REQUEST_TIMEOUT_MS }
++      { timeout: CODEX_OPTIONAL_REQUEST_TIMEOUT_MS }, client
+     );
+ 
+     if (result.statusCode < 200 || result.statusCode >= 300) {
+@@ -415,7 +418,7 @@
+   }
+ };
+ 
+-const fetchCodexQuota = async (file: AuthFileItem, t: TFunction): Promise<CodexQuotaData> => {
++const fetchCodexQuota = async (file: AuthFileItem, t: TFunction, client = apiClient.captureConnection()): Promise<CodexQuotaData> => {
+   const rawAuthIndex = file['auth_index'] ?? file.authIndex;
+   const authIndex = normalizeAuthIndex(rawAuthIndex);
+   if (!authIndex) {
+@@ -424,18 +427,10 @@
+ 
+   const planTypeFromFile = resolveCodexPlanType(file);
+   const subscriptionActiveUntilFromFile = resolveCodexSubscriptionActiveUntil(file);
+-  const accountId = resolveCodexChatgptAccountId(file);
+   const requestHeader = buildCodexRequestHeader(file);
+-
+-  const [result, liveSubscriptionActiveUntil] = await Promise.all([
+-    apiCallApi.request({
+-      authIndex,
+-      method: 'GET',
+-      url: CODEX_USAGE_URL,
+-      header: requestHeader,
+-    }),
+-    fetchCodexSubscriptionActiveUntil(authIndex, accountId, requestHeader),
+-  ]);
++  const result = await apiCallApi.request({
++    authIndex, method: 'GET', url: CODEX_USAGE_URL, header: requestHeader,
++  }, undefined, client);
+ 
+   if (result.statusCode < 200 || result.statusCode >= 300) {
+     throw createStatusError(getApiCallErrorMessage(result), result.statusCode);
+@@ -450,19 +445,10 @@
+   const accountCredits = normalizeCodexAccountCredits(payload.credits);
+   const resetCredits = payload.rate_limit_reset_credits ?? payload.rateLimitResetCredits ?? null;
+   const usageResetCreditsData = normalizeCodexResetCreditsPayload(resetCredits);
+-  const resetCreditsData = await fetchCodexResetCredits(authIndex, requestHeader, t);
+-  const resetCreditsCountFromDetails =
+-    resetCreditsData.credits.length > 0 ? resetCreditsData.credits.length : null;
+-  const rateLimitResetCreditsAvailableCount =
+-    resetCreditsData.availableCount ??
+-    resetCreditsCountFromDetails ??
+-    usageResetCreditsData.availableCount;
+-  const rateLimitResetCreditsApplicableAvailableCount =
+-    usageResetCreditsData.applicableAvailableCount ??
+-    resetCreditsData.applicableAvailableCount ??
+-    rateLimitResetCreditsAvailableCount;
++  const rateLimitResetCreditsAvailableCount = usageResetCreditsData.availableCount;
++  const rateLimitResetCreditsApplicableAvailableCount = usageResetCreditsData.applicableAvailableCount;
+   const planType = planTypeFromUsage ?? planTypeFromFile;
+-  const subscriptionActiveUntil = liveSubscriptionActiveUntil ?? subscriptionActiveUntilFromFile;
++  const subscriptionActiveUntil = subscriptionActiveUntilFromFile;
+   const windows = buildCodexQuotaWindows(payload, t);
+   return {
+     planType,
+@@ -471,8 +457,8 @@
+     creditsUnlimited: accountCredits.unlimited,
+     rateLimitResetCreditsAvailableCount,
+     rateLimitResetCreditsApplicableAvailableCount,
+-    rateLimitResetCredits: resetCreditsData.credits,
+-    rateLimitResetCreditsError: resetCreditsData.error,
++    rateLimitResetCredits: [],
++    rateLimitResetCreditsError: '',
+     windows,
+   };
+ };
+@@ -491,7 +477,8 @@
+ 
+ const consumeCodexRateLimitResetCredit = async (
+   file: AuthFileItem,
+-  t: TFunction
++  t: TFunction,
++  client: ReturnType<typeof apiClient.captureConnection>
+ ): Promise<string> => {
+   const rawAuthIndex = file['auth_index'] ?? file.authIndex;
+   const authIndex = normalizeAuthIndex(rawAuthIndex);
+@@ -509,7 +496,7 @@
+     data: JSON.stringify({
+       redeem_request_id: createCodexRedeemRequestId(),
+     }),
+-  });
++  }, undefined, client);
+ 
+   if (result.statusCode < 200 || result.statusCode >= 300) {
+     throw createStatusError(getApiCallErrorMessage(result), result.statusCode);
+@@ -521,13 +508,13 @@
+   return authIndex;
+ };
+ 
+-const resetCodexQuota = async (file: AuthFileItem, t: TFunction): Promise<CodexQuotaData> => {
++const resetCodexQuota = async (file: AuthFileItem, t: TFunction, client = apiClient.captureConnection()): Promise<CodexQuotaData> => {
+   const assertConnection = guardConfigConnection();
+-  const authIndex = await consumeCodexRateLimitResetCredit(file, t);
++  const authIndex = await consumeCodexRateLimitResetCredit(file, t, client);
+   try {
+     // Never clear a different connection's cooldown after awaiting redemption.
+     assertConnection();
+-    const result = await authFilesApi.resetCooldown(authIndex);
++    const result = await authFilesApi.resetCooldown(authIndex, client);
+     assertConnection();
+     if (result.status !== 'ok' || result.auth_index !== authIndex) {
+       throw new Error('Invalid cooldown reset response');
+@@ -536,7 +523,8 @@
+     // Redemption already succeeded: direct the operator to the existing clear action.
+     throw new Error(t('codex_quota.reset_cooldown_failed'));
+   }
+-  return fetchCodexQuota(file, t);
++  assertConnection();
++  return fetchCodexQuota(file, t, client);
+ };
+ 
+ export const CODEX_CONFIG: QuotaProviderData<CodexQuotaState, CodexQuotaData> = {
+@@ -544,6 +532,24 @@
+   i18nPrefix: 'codex_quota',
+   filterFn: (file) => isCodexFile(file) && !isDisabledAuthFile(file),
+   fetchQuota: fetchCodexQuota,
++  enrichQuota: async (file, data, t, client = apiClient.captureConnection()) => {
++    const authIndex = normalizeAuthIndex(file.auth_index ?? file.authIndex);
++    if (!authIndex) return data;
++    const header = buildCodexRequestHeader(file);
++    const [subscription, details] = await Promise.all([
++      fetchCodexSubscriptionActiveUntil(authIndex, resolveCodexChatgptAccountId(file), header, client),
++      fetchCodexResetCredits(authIndex, header, t, client),
++    ]);
++    const available = details.availableCount ?? (details.credits.length || null) ?? data.rateLimitResetCreditsAvailableCount;
++    return {
++      ...data,
++      subscriptionActiveUntil: subscription ?? data.subscriptionActiveUntil,
++      rateLimitResetCreditsAvailableCount: available,
++      rateLimitResetCreditsApplicableAvailableCount: data.rateLimitResetCreditsApplicableAvailableCount ?? details.applicableAvailableCount ?? available,
++      rateLimitResetCredits: details.credits,
++      rateLimitResetCreditsError: details.error,
++    };
++  },
+   resetQuota: resetCodexQuota,
+   canResetQuota: (quota) => (quota.rateLimitResetCreditsAvailableCount ?? 0) > 0,
+   storeSelector: (state) => state.codexQuota,
+diff --git a/src/features/quota/hooks/useQuotaBatchLoader.ts b/src/features/quota/hooks/useQuotaBatchLoader.ts
+--- a/src/features/quota/hooks/useQuotaBatchLoader.ts
++++ b/src/features/quota/hooks/useQuotaBatchLoader.ts
+@@ -1,12 +1,4 @@
+-/**
+- * 混合提供商批量额度加载（原 useQuotaLoader 的跨分区泛化）。
+- *
+- * 保留的三道守卫与旧实现逐一对应：
+- * - loadingRef：并发批量加载去重；
+- * - requestIdRef：被超越的响应直接丢弃；
+- * - cacheGeneration：断线重连后过期请求不得写入新会话缓存。
+- * 提交按 provider 分组进行 —— 快的提供商先落地，不等慢的。
+- */
++/** Publish each account independently; request and cache generations reject superseded loads. */
+ 
+ import { useCallback, useRef, useState } from 'react';
+ import { useTranslation } from 'react-i18next';
+@@ -14,18 +6,9 @@
+ import { getStatusFromError } from '@/utils/quota';
+ import { getQuotaCacheKey } from '@/utils/quota/identity';
+ import type { QuotaFileEntry } from '../logic';
+-import { QUOTA_ADAPTERS, getQuotaSetter, type QuotaCardState } from '../providers';
++import { QUOTA_ADAPTERS, getQuotaSetter } from '../providers';
+ import { enrichQuotaInBackground } from '../quotaEnrichment';
+ import type { QuotaProviderType } from '../providers/types';
+-
+-interface BatchFetchResult {
+-  name: string;
+-  cacheKey: string;
+-  status: 'success' | 'error';
+-  data?: unknown;
+-  error?: string;
+-  errorStatus?: number;
+-}
+ 
+ export function useQuotaBatchLoader() {
+   const { t } = useTranslation();
+@@ -65,54 +48,24 @@
+               });
+             });
+ 
+-            const results = await Promise.all(
+-              entries.map(async ({ file }): Promise<BatchFetchResult> => {
+-                const cacheKey = getQuotaCacheKey(file);
+-                try {
+-                  const data = await adapter.fetchQuota(file, t);
+-                  return { name: file.name, cacheKey, status: 'success', data };
+-                } catch (err: unknown) {
+-                  const message = err instanceof Error ? err.message : t('common.unknown_error');
+-                  return {
+-                    name: file.name,
+-                    cacheKey,
+-                    status: 'error',
+-                    error: message,
+-                    errorStatus: getStatusFromError(err),
+-                  };
+-                }
+-              })
+-            );
+-
+-            if (requestId !== requestIdRef.current) return;
+-
+-            const committedStates = new Map<string, QuotaCardState>();
+-            setQuota((prev) => {
+-              const nextState = { ...prev };
+-              results.forEach((result) => {
+-                commitIfQuotaCacheCurrent(
+-                  cacheGeneration,
+-                  () => {
+-                    nextState[result.cacheKey] =
+-                      result.status === 'success'
+-                        ? adapter.buildSuccessState(result.data)
+-                        : adapter.buildErrorState(
+-                            result.error || t('common.unknown_error'),
+-                            result.errorStatus
+-                          );
+-                    committedStates.set(result.cacheKey, nextState[result.cacheKey]);
+-                  },
+-                  result.name
+-                );
+-              });
+-              return nextState;
+-            });
+-            results.forEach((result, index) => {
+-              const state = committedStates.get(result.cacheKey);
+-              if (result.status === 'success' && state) {
+-                void enrichQuotaInBackground(adapter, entries[index].file, result.data, state, t);
++            await Promise.all(entries.map(async ({ file }) => {
++              const cacheKey = getQuotaCacheKey(file);
++              try {
++                const data = await adapter.fetchQuota(file, t);
++                if (requestId !== requestIdRef.current) return;
++                const state = adapter.buildSuccessState(data);
++                const committed = commitIfQuotaCacheCurrent(cacheGeneration, () => {
++                  setQuota((previous) => ({ ...previous, [cacheKey]: state }));
++                }, file.name);
++                if (committed) void enrichQuotaInBackground(adapter, file, data, state, t);
++              } catch (error: unknown) {
++                if (requestId !== requestIdRef.current) return;
++                const message = error instanceof Error ? error.message : t('common.unknown_error');
++                commitIfQuotaCacheCurrent(cacheGeneration, () => {
++                  setQuota((previous) => ({ ...previous, [cacheKey]: adapter.buildErrorState(message, getStatusFromError(error)) }));
++                }, file.name);
+               }
+-            });
++            }));
+           })
+         );
+       } finally {
+diff --git a/src/features/quota/hooks/useQuotaActions.ts b/src/features/quota/hooks/useQuotaActions.ts
+--- a/src/features/quota/hooks/useQuotaActions.ts
++++ b/src/features/quota/hooks/useQuotaActions.ts
+@@ -1,9 +1,3 @@
+-/**
+- * 单卡额度操作：刷新 + Codex 重置积分。
+- * 流程 1:1 移植旧 QuotaSection（confirm modal、resetting 再入守卫、
+- * generation-guarded commit、成功/失败通知），仅把 config 换成 adapter。
+- */
+-
+ import { useCallback, useState } from 'react';
+ import { useTranslation } from 'react-i18next';
+ import {
+@@ -84,16 +78,16 @@
+         confirmText: t('codex_quota.reset_confirm_button'),
+         variant: 'primary',
+         onConfirm: async () => {
++          const request = resetQuotaFn(file, t);
+           const cacheGeneration = captureQuotaCacheGeneration(file.name);
+           const setQuota = getQuotaSetter(adapter);
+           setResettingQuotaName(cacheKey);
+           try {
+-            const data = await resetQuotaFn(file, t);
++            const data = await request;
+             commitIfQuotaCacheCurrent(cacheGeneration, () => {
+-              setQuota((prev) => ({
+-                ...prev,
+-                [cacheKey]: adapter.buildSuccessState(data),
+-              }));
++              const successState = adapter.buildSuccessState(data);
++              setQuota((prev) => ({ ...prev, [cacheKey]: successState }));
++              void enrichQuotaInBackground(adapter, file, data, successState, t);
+               showNotification(t('codex_quota.reset_success', { name: file.name }), 'success');
+             });
+           } catch (err: unknown) {
+diff --git a/src/features/quota/components/QuotaCard.tsx b/src/features/quota/components/QuotaCard.tsx
+--- a/src/features/quota/components/QuotaCard.tsx
++++ b/src/features/quota/components/QuotaCard.tsx
+@@ -53,6 +53,7 @@
+   const { t } = useTranslation();
+   const adapter = QUOTA_ADAPTERS[entry.type];
+   const file = entry.file;
++  const displayQuota = quota?.retained ?? quota;
+   const retainedClaudeUsage =
+     entry.type === 'claude' && hasClaudeUsageData(quota as ClaudeQuotaState | undefined);
+   const displayName = getQuotaDisplayName(file);
+@@ -137,6 +138,7 @@
+       </header>
+ 
+       <div className={styles.body}>
++        {quota?.retained && status === 'error' && <div role="alert" className={styles.errorStrip}>{errorMessage}</div>}
+         {status === 'idle' ? (
+           <button
+             type="button"
+@@ -147,7 +149,7 @@
+             <IconRefreshCw size={15} aria-hidden="true" className={styles.idleGlyph} />
+             <span className={styles.idleHint}>{t(`${adapter.i18nPrefix}.idle`)}</span>
+           </button>
+-        ) : loading && !retainedClaudeUsage ? (
++        ) : loading && !retainedClaudeUsage && !quota?.retained ? (
+           <div className={styles.skeleton} aria-busy="true">
+             <span className={styles.srOnly}>{t(`${adapter.i18nPrefix}.loading`)}</span>
+             {[0, 1].map((row) => (
+@@ -157,13 +159,13 @@
+               </div>
+             ))}
+           </div>
+-        ) : status === 'error' ? (
++        ) : status === 'error' && !quota?.retained ? (
+           <div className={styles.errorStrip} role="alert">
+             {t(`${adapter.i18nPrefix}.load_failed`, { message: errorMessage })}
+           </div>
+-        ) : quota && !retainedClaudeUsage ? (
++        ) : displayQuota && !retainedClaudeUsage ? (
+           <adapter.Body
+-            quota={quota}
++            quota={displayQuota}
+             classes={quotaClasses}
+             summary
+             planItems={claudePlanItems}
+@@ -172,14 +174,14 @@
+         ) : !retainedClaudeUsage ? (
+           <div className={styles.idleHint}>{t(`${adapter.i18nPrefix}.idle`)}</div>
+         ) : null}
+-        {loading && retainedClaudeUsage && (
++        {loading && (retainedClaudeUsage || quota?.retained) && (
+           <div role="status" aria-busy="true" className={quotaClasses.quotaMessage}>
+             {t(`${adapter.i18nPrefix}.loading`)}
+           </div>
+         )}
+-        {retainedClaudeUsage && quota && (
++        {retainedClaudeUsage && displayQuota && (
+           <adapter.Body
+-            quota={quota}
++            quota={displayQuota}
+             classes={quotaClasses}
+             summary
+             planItems={claudePlanItems}
+diff --git a/tests/claudeOAuthUsage.test.ts b/tests/claudeOAuthUsage.test.ts
+--- a/tests/claudeOAuthUsage.test.ts
++++ b/tests/claudeOAuthUsage.test.ts
+@@ -192,7 +192,9 @@
+         ? result(200, fixture)
+         : result(200, { account: { has_claude_max: true } });
+     };
+-    const data = await CLAUDE_CONFIG.fetchQuota(file, translations.t);
++    const primary = await CLAUDE_CONFIG.fetchQuota(file, translations.t, apiClient);
++    expect(primary.planType).toBeNull();
++    const data = await CLAUDE_CONFIG.enrichQuota!(file, primary, translations.t, apiClient);
+     expect(requests.map((request) => request.url)).toEqual([CLAUDE_USAGE_URL, CLAUDE_PROFILE_URL]);
+     expect(requests[0]).toMatchObject({
+       method: 'GET',
+@@ -222,7 +224,7 @@
+     apiCallApi.request = async (request) =>
+       request.url === CLAUDE_USAGE_URL ? result(200, fixture) : result(200, null);
+     const state = CLAUDE_CONFIG.buildSuccessState(
+-      await CLAUDE_CONFIG.fetchQuota(file, translations.t)
++      await CLAUDE_CONFIG.fetchQuota(file, translations.t, apiClient)
+     );
+     expect(state.windows.map((window) => window.id)).not.toContain('cloud-session-credits');
+     expect(nextRecoveryMs('claude', state, Date.parse('2026-10-31T00:00:00Z'))).toBe(
+@@ -237,7 +239,7 @@
+           ? result(status, fixture)
+           : result(200, { account: { has_claude_max: true } });
+       try {
+-        await CLAUDE_CONFIG.fetchQuota(file, translations.t);
++        await CLAUDE_CONFIG.fetchQuota(file, translations.t, apiClient);
+         throw new Error('A failed read must not reach the success notification path');
+       } catch (error) {
+         expect(getStatusFromError(error)).toBe(status);
+@@ -247,7 +249,7 @@
+ 
+   test('does not fabricate a snapshot when a read fails without cached data', async () => {
+     apiCallApi.request = async () => result(401, { error: 'usage unavailable' });
+-    await expect(CLAUDE_CONFIG.fetchQuota(file, translations.t)).rejects.toThrow(
++    await expect(CLAUDE_CONFIG.fetchQuota(file, translations.t, apiClient)).rejects.toThrow(
+       '401 usage unavailable'
+     );
+   });
+@@ -261,7 +263,7 @@
+         request.url === CLAUDE_USAGE_URL
+           ? result(200, { iguana_necktie: window })
+           : result(503, null);
+-      const data = await CLAUDE_CONFIG.fetchQuota(file, translations.t);
++      const data = await CLAUDE_CONFIG.fetchQuota(file, translations.t, apiClient);
+       expect(data.windows).toHaveLength(1);
+       expect(data.windows[0].id).toBe(
+         'remaining_dollars' in window ? 'cloud-session-credits' : 'seven-day-fable'
+@@ -273,7 +275,7 @@
+   test('rejects malformed successful responses rather than erasing the last-good values', async () => {
+     for (const body of [null, '', 'not-json', [], { error: 'no usage' }]) {
+       apiCallApi.request = async () => result(200, body);
+-      await expect(CLAUDE_CONFIG.fetchQuota(file, translations.t)).rejects.toThrow(
++      await expect(CLAUDE_CONFIG.fetchQuota(file, translations.t, apiClient)).rejects.toThrow(
+         translations.t('claude_quota.empty_windows')
+       );
+     }
+@@ -305,7 +307,7 @@
+       store.clearQuotaCache();
+       try {
+         const good = CLAUDE_CONFIG.buildSuccessState(
+-          await CLAUDE_CONFIG.fetchQuota(file, translations.t)
++          await CLAUDE_CONFIG.fetchQuota(file, translations.t, apiClient)
+         );
+         store.setClaudeQuota({ [key]: good });
+         failing = true;
+@@ -313,7 +315,7 @@
+         expect(useQuotaStore.getState().claudeQuota[key].windows).toBe(good.windows);
+         let failureHandled = false;
+         try {
+-          await CLAUDE_CONFIG.fetchQuota(file, translations.t);
++          await CLAUDE_CONFIG.fetchQuota(file, translations.t, apiClient);
+         } catch (error) {
+           failureHandled = true;
+           store.setClaudeQuota({
+@@ -334,7 +336,7 @@
+         expect(retained.dollarWindows).toBe(good.dollarWindows);
+         failing = false;
+         const recovered = CLAUDE_CONFIG.buildSuccessState(
+-          await CLAUDE_CONFIG.fetchQuota(file, translations.t)
++          await CLAUDE_CONFIG.fetchQuota(file, translations.t, apiClient)
+         );
+         store.setClaudeQuota({ [key]: recovered });
+         expect(useQuotaStore.getState().claudeQuota[key]).toBe(recovered);
+@@ -361,7 +363,7 @@
+     store.clearQuotaCache();
+     try {
+       expect(CLAUDE_CONFIG.storeSelector(useQuotaStore.getState())[file.name]).toBeUndefined();
+-      const data = await CLAUDE_CONFIG.fetchQuota(file, translations.t);
++      const data = await CLAUDE_CONFIG.fetchQuota(file, translations.t, apiClient);
+       const state = CLAUDE_CONFIG.buildSuccessState(data);
+       store.setClaudeQuota({ [getQuotaCacheKey(file)]: state });
+       const stored = CLAUDE_CONFIG.storeSelector(useQuotaStore.getState())[file.name];
+@@ -383,7 +385,7 @@
+           maxPeriodHours: 14 * 24,
+         }).anchorMs
+       ).toBe(Date.parse('2026-10-15T09:00:00Z'));
+-      expect(post).toHaveBeenCalledTimes(2);
++      expect(post).toHaveBeenCalledTimes(1);
+       store.setClaudeQuota((previous) => previous);
+       expect(CLAUDE_CONFIG.storeSelector(useQuotaStore.getState())[file.name]).toBe(state);
+     } finally {
+diff --git a/tests/codexQuota.test.ts b/tests/codexQuota.test.ts
+--- a/tests/codexQuota.test.ts
++++ b/tests/codexQuota.test.ts
+@@ -177,16 +177,15 @@
+       throw new Error(`Unexpected URL: ${payload.url}`);
+     };
+ 
+-    const quota = await CODEX_CONFIG.fetchQuota(
+-      {
++    const file =       {
+         name: 'codex.json',
+         type: 'codex',
+         auth_index: 'codex:1',
+         metadata: { chatgpt_account_id: 'account/id + space' },
+         chatgpt_subscription_active_until: '2026-09-03T13:27:01Z',
+-      },
+-      t
+-    );
++      };
++    const primary = await CODEX_CONFIG.fetchQuota(file, t);
++    const quota = await CODEX_CONFIG.enrichQuota!(file, primary, t);
+ 
+     expect(quota.subscriptionActiveUntil).toBe('2026-10-03T13:27:01Z');
+     const subscriptionRequest = requests.find((request) =>
+@@ -212,16 +211,15 @@
+       throw new Error(`Unexpected URL: ${payload.url}`);
+     };
+ 
+-    const quota = await CODEX_CONFIG.fetchQuota(
+-      {
++    const file =       {
+         name: 'codex.json',
+         type: 'codex',
+         auth_index: 'codex:2',
+         chatgpt_account_id: 'account-2',
+         chatgpt_subscription_active_until: '2026-09-03T13:27:01Z',
+-      },
+-      t
+-    );
++      };
++    const primary = await CODEX_CONFIG.fetchQuota(file, t);
++    const quota = await CODEX_CONFIG.enrichQuota!(file, primary, t);
+ 
+     expect(quota.subscriptionActiveUntil).toBe('2026-09-03T13:27:01Z');
+   });
+diff --git a/tests/codexQuotaReset.test.ts b/tests/codexQuotaReset.test.ts
+--- a/tests/codexQuotaReset.test.ts
++++ b/tests/codexQuotaReset.test.ts
+@@ -44,7 +44,7 @@
+       await reset();
+       expect(calls.slice(0, 3)).toEqual(['consume', 'clear', 'read']);
+       expect(clear).toHaveBeenCalledTimes(1);
+-      expect(clear).toHaveBeenCalledWith('test-index');
++      expect(clear).toHaveBeenCalledWith('test-index', expect.anything());
+     }
+   );
+ 
+diff --git a/src/features/quota/quotaTimelineModel.ts b/src/features/quota/quotaTimelineModel.ts
+--- a/src/features/quota/quotaTimelineModel.ts
++++ b/src/features/quota/quotaTimelineModel.ts
+@@ -323,7 +323,7 @@
+   name: string;
+   displayName: string;
+   provider: QuotaProviderType;
+-  quota: { status?: string } | undefined;
++  quota: { status?: string; retained?: { status?: string } } | undefined;
+   /**
+    * Longest window period worth drawing, in hours — normally the visible span.
+    * A window longer than the whole view can't show a boundary, and a much
+@@ -347,7 +347,8 @@
+  * scheduled", which is the truth.
+  */
+ export function buildTimelineLane(input: TimelineLaneInput): TimelineLane {
+-  const { name, displayName, provider, quota, maxPeriodHours } = input;
++  const { name, displayName, provider, maxPeriodHours } = input;
++  const quota = input.quota?.retained ?? input.quota;
+   const empty: TimelineLane = {
+     name,
+     displayName,

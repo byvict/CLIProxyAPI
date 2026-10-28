@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"testing"
 	"time"
 )
@@ -103,5 +105,35 @@ func TestReadActivityWorksWithoutT3AndDoesNotModifyArchive(t *testing.T) {
 	after, _ := os.ReadFile(path)
 	if string(before) != string(after) || report.AvailableFrom != "2026-08-28" || report.Providers[1].Days[0].Tokens != 110 {
 		t.Fatalf("archive read: %+v", report)
+	}
+}
+
+func TestActivityReportIndependentOfEventOrder(t *testing.T) {
+	now := time.Date(2026, 10, 27, 15, 0, 0, 0, time.UTC)
+	start := time.Date(2026, 10, 27, 2, 59, 0, 0, time.UTC).UnixMilli()
+	turns := []execution{
+		{ID: "t3", Provider: "grok", Session: "s", Source: "t3:v2", Start: start, End: start + 120000, Tokens: sql.NullInt64{Int64: 1100, Valid: true}},
+		{ID: "native", Provider: "grok", Session: "s", Source: "cli:grok", Start: start + 500, End: start + 120000},
+		{ID: "open", Provider: "grok", Session: "s", Source: "t3:v2", Start: start + 300000, Partial: true},
+	}
+	events := []usageEvent{
+		{Provider: "grok", Session: "s", At: start + 1000, Tokens: 400},
+		{Provider: "grok", Session: "s", At: start + 100000, Tokens: 700},
+		{Provider: "grok", Session: "s", At: start + 100000, Tokens: 13},
+		{Provider: "grok", Session: "s", At: start + 350000, Tokens: 300},
+		{Provider: "claude", Session: "deleted", At: start, Tokens: 99},
+		{Provider: "codex", Session: "future", At: now.Add(time.Hour).UnixMilli(), Tokens: 5},
+	}
+	want, err := aggregateActivity(slices.Clone(turns), events, now, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	slices.Reverse(events)
+	got, err := aggregateActivity(slices.Clone(turns), events, now, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(want, got) {
+		t.Fatalf("event order changed report: %#v != %#v", want, got)
 	}
 }

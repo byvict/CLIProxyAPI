@@ -19,7 +19,7 @@ export function PerformancePage() {
   const [provider, setProvider] = useState<Provider>('all');
   const [source, setSource] = useState<'t3' | 'github'>('t3');
   const performance = useActivity('/performance', parsePerformance);
-  const github = useActivity('/infra/github', parseGitHub);
+  const github = useActivity('/infra/github', parseGitHub, source === 'github');
   const activity =
     performance.state.status === 'ready' && performance.state.data.status === 'ready'
       ? performance.state.data.activity
@@ -29,11 +29,9 @@ export function PerformancePage() {
     github.state.status === 'ready' && github.state.data.status === 'connected'
       ? github.state.data.activity
       : null;
-  const busy = performance.state.status === 'loading' || github.state.status === 'loading';
-  const refresh = () => {
-    performance.refresh();
-    github.refresh();
-  };
+  const selectedSource = source === 'github' ? github : performance;
+  const busy = selectedSource.state.status === 'loading' || selectedSource.refreshing;
+  const refresh = selectedSource.refresh;
   return (
     <div className={styles.page}>
       <header className={styles.heading}>
@@ -45,6 +43,10 @@ export function PerformancePage() {
           <IconRefreshCw size={15} /> Atualizar
         </Button>
       </header>
+      {selectedSource.refreshing && <p role="status">Atualizando…</p>}
+      {selectedSource.state.status === 'ready' && selectedSource.state.refreshError && (
+        <div className="error-box" role="alert">{selectedSource.state.refreshError}</div>
+      )}
       <nav className={styles.providerTabs} aria-label="Provedores">
         {providers.map((id) => (
           <button

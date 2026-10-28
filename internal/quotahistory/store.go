@@ -113,6 +113,49 @@ func Record(ctx context.Context, path string, observations []Observation) error 
 }
 
 func Read(ctx context.Context, path string, sinceMs, untilMs int64) ([]Observation, error) {
+	return read(ctx, path, sinceMs, untilMs, false)
+}
+
+// ReadSnapshot keeps the first identity row and latest sample of every historical series.
+func ReadSnapshot(ctx context.Context, path string, nowMs int64) ([]Observation, error) {
+	return read(ctx, path, nowMs, nowMs, true)
+}
+
+// ReadView reuses the bounded rows for the snapshot and excludes identity-only rows from analysis.
+func ReadView(ctx context.Context, path string, sinceMs, untilMs int64) ([]Observation, []Observation, error) {
+	rows, err := read(ctx, path, sinceMs, untilMs, true)
+	if err != nil {
+		return nil, nil, err
+	}
+	type series struct {
+		credential, window string
+		period             sql.NullFloat64
+	}
+	predecessors := map[series]int{}
+	for i, row := range rows {
+		if row.ObservedAtMs >= sinceMs {
+			continue
+		}
+		key := series{credential: row.Credential, window: row.WindowID}
+		if row.PeriodHours != nil {
+			key.period = sql.NullFloat64{Float64: *row.PeriodHours, Valid: true}
+		}
+		predecessors[key] = i
+	}
+	keep := map[int]bool{}
+	for _, i := range predecessors {
+		keep[i] = true
+	}
+	observations := []Observation{}
+	for i, row := range rows {
+		if row.ObservedAtMs >= sinceMs || keep[i] {
+			observations = append(observations, row)
+		}
+	}
+	return observations, rows, nil
+}
+
+func read(ctx context.Context, path string, sinceMs, untilMs int64, identity bool) ([]Observation, error) {
 	db, err := open(path)
 	if err != nil {
 		return nil, err
@@ -122,13 +165,25 @@ func Read(ctx context.Context, path string, sinceMs, untilMs int64) ([]Observati
 			log.WithError(errClose).Error("close quota history database")
 		}
 	}()
-	// Include one predecessor per series for interpolation at the range boundary.
-	rows, err := db.QueryContext(ctx, `SELECT credential, provider, window_id, label,
-		observed_at_ms, remaining, reset_at_ms, period_hours FROM observations
-		WHERE observed_at_ms BETWEEN ? AND ? OR (credential, window_id, observed_at_ms) IN (
-			SELECT credential, window_id, MAX(observed_at_ms) FROM observations
-			WHERE observed_at_ms < ? GROUP BY credential, window_id
-		) ORDER BY credential, window_id, observed_at_ms`, sinceMs, untilMs, sinceMs)
+	query := `SELECT credential, provider, window_id, label,
+ observed_at_ms, remaining, reset_at_ms, period_hours FROM observations
+ WHERE observed_at_ms BETWEEN ? AND ? OR (credential, window_id, observed_at_ms) IN (
+  SELECT credential, window_id, MAX(observed_at_ms) FROM observations
+  WHERE observed_at_ms < ? GROUP BY credential, window_id, period_hours
+ )`
+	args := []any{sinceMs, untilMs, sinceMs}
+	if identity {
+		query += ` OR (credential, window_id, observed_at_ms) IN (
+   SELECT credential, window_id, observed_at_ms FROM (
+    SELECT credential, window_id, observed_at_ms,
+     ROW_NUMBER() OVER (PARTITION BY credential ORDER BY window_id, observed_at_ms) AS position
+    FROM observations WHERE observed_at_ms <= ?
+   ) WHERE position = 1
+  )`
+		args = append(args, untilMs)
+	}
+	query += ` ORDER BY credential, window_id, observed_at_ms`
+	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}

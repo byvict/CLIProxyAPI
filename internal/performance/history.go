@@ -88,7 +88,7 @@ func ReadActivity(ctx context.Context, t3Path, historyPath string, now time.Time
 	if errRows != nil {
 		return Report{}, errRows
 	}
-	rows, err = db.QueryContext(ctx, `SELECT provider,session_id,at_ms,input_tokens+output_tokens FROM usage_events ORDER BY at_ms`)
+	rows, err = db.QueryContext(ctx, `SELECT provider,session_id,at_ms,input_tokens+output_tokens FROM usage_events`)
 	if err != nil {
 		return Report{}, fmt.Errorf("read imported token events: %w", err)
 	}

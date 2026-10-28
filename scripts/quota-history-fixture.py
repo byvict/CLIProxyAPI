@@ -70,9 +70,9 @@ else:
     get("quota-history")
     base = int(time.time() * 1000)
     fixtures = {}
-    cases = {"before": (4, 1, "yellow"), "after": (34, 1, "blue"),
-             "green": (24, 1, "green"), "red": (20, 0.25, "red"),
-             "codex-resets": (32, 1, "blue")}
+    cases = {"before": (4, 1, "yellow"), "after": (14, 1, "blue"),
+             "green": (20, 1, "green"), "red": (20, 1, "red"),
+             "codex-resets": (14, 1, "blue")}
     with sqlite3.connect(root / "quota-history.sqlite") as database:
         database.execute("DELETE FROM observations")
         if database.execute("SELECT name FROM sqlite_master WHERE name='polls'").fetchone():
@@ -85,7 +85,7 @@ else:
             index = str(file.get("auth_index", file.get("authIndex", "")))
             if not index:
                 raise RuntimeError("Fixture credential has no auth index")
-            reset = base + 24 * 3_600_000
+            reset = base + (48 if case == "red" else 24) * 3_600_000
             provider = "codex" if case == "codex-resets" else "claude"
             window_id = "weekly" if provider == "codex" else "seven-day"
             fixtures[index] = {"name": file["name"], "remaining": remaining,

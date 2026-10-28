@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useSyncExternalStore } from 'react';
 import { apiClient } from '@/services/api/client';
-import { useAuthStore } from '@/stores';
+import { useAuthStore, useQuotaStore } from '@/stores';
 
 export const providers = ['all', 'claude', 'codex', 'grok', 'meta'] as const;
 export type Provider = (typeof providers)[number];
@@ -137,31 +137,96 @@ export function parseGitHub(value: unknown): GitHubResponse {
 }
 
 type Remote<T> =
-  { status: 'loading' } | { status: 'error'; message: string } | { status: 'ready'; data: T };
-export function useActivity<T>(path: string, parse: (value: unknown) => T) {
+  | { status: 'loading' }
+  | { status: 'error'; message: string }
+  | { status: 'ready'; data: T; refreshing: boolean; refreshError: string };
+
+const loading = { status: 'loading' } as const;
+type ActivityEntry = {
+  state: Remote<unknown>;
+  receivedAt: number;
+  controller: AbortController;
+  pending?: Promise<void>;
+};
+const responses = new Map<string, ActivityEntry>();
+const listeners = new Set<() => void>();
+let scope = '';
+const emit = () => listeners.forEach((listener) => listener());
+function currentScope() {
+  return [apiClient.getConnectionRevision(), useQuotaStore.getState().cacheGeneration,
+    new Intl.DateTimeFormat('en', { year: 'numeric', timeZone: 'America/Sao_Paulo' }).format(Date.now())].join(':');
+}
+function entries() {
+  const next = currentScope();
+  if (scope !== next) {
+    responses.forEach((entry) => entry.controller.abort());
+    responses.clear();
+    scope = next;
+  }
+  return responses;
+}
+
+export function invalidateActivity(path: string) {
+  const cache = entries();
+  cache.get(path)?.controller.abort();
+  cache.delete(path);
+  emit();
+}
+
+async function readActivity(path: string, parse: (value: unknown) => unknown, force: boolean) {
+  const cache = entries();
+  const previous = cache.get(path);
+  if (previous?.pending) return previous.pending;
+  if (!force && previous?.state.status === 'ready' && Date.now() - previous.receivedAt < 60_000) return;
+  const entry: ActivityEntry = {
+    state: previous?.state.status === 'ready'
+      ? { ...previous.state, refreshing: true, refreshError: '' } : loading,
+    receivedAt: previous?.receivedAt ?? 0,
+    controller: new AbortController(),
+  };
+  cache.set(path, entry);
+  const capturedScope = scope;
+  const current = () => capturedScope === currentScope() && responses.get(path) === entry;
+  const client = apiClient.captureConnection();
+  entry.pending = (async () => {
+    try {
+      const data = await client.get<unknown>(path, { signal: entry.controller.signal, timeout: 0 });
+      parse(data);
+      if (current()) {
+        entry.state = { status: 'ready', data, refreshing: false, refreshError: '' };
+        entry.receivedAt = Date.now();
+      }
+    } catch (error: unknown) {
+      if (current()) {
+        const message = error instanceof Error ? error.message : 'Não foi possível carregar os dados.';
+        entry.state = entry.state.status === 'ready'
+          ? { ...entry.state, refreshing: false, refreshError: message }
+          : { status: 'error', message };
+      }
+    } finally {
+      entry.pending = undefined;
+      if (current()) emit();
+    }
+  })();
+  emit();
+  return entry.pending;
+}
+
+export function useActivity<T>(path: string, parse: (value: unknown) => T, enabled = true) {
   const apiBase = useAuthStore((state) => state.apiBase);
   const managementKey = useAuthStore((state) => state.managementKey);
-  const [version, setVersion] = useState(0);
-  const [state, setState] = useState<Remote<T>>({ status: 'loading' });
-  const refresh = useCallback(() => setVersion((value) => value + 1), []);
+  const generation = useQuotaStore((state) => state.cacheGeneration);
+  const subscribe = useCallback((listener: () => void) => {
+    listeners.add(listener);
+    return () => { listeners.delete(listener); };
+  }, []);
+  const snapshot = useCallback(() => entries().get(path)?.state ?? loading, [path]);
+  const raw = useSyncExternalStore(subscribe, snapshot);
+  const state: Remote<T> = useMemo(() => raw.status === 'ready'
+    ? { ...raw, data: parse(raw.data) } : raw, [raw, parse]);
+  const refresh = useCallback(() => { void readActivity(path, parse, true); }, [path, parse]);
   useEffect(() => {
-    const controller = new AbortController();
-    const client = apiClient.captureConnection();
-    setState({ status: 'loading' });
-    client
-      .get<unknown>(path, { signal: controller.signal, timeout: 0 })
-      .then((value) => {
-        const data = parse(value);
-        if (!controller.signal.aborted) setState({ status: 'ready', data });
-      })
-      .catch((error: unknown) => {
-        if (!controller.signal.aborted)
-          setState({
-            status: 'error',
-            message: error instanceof Error ? error.message : 'Não foi possível carregar os dados.',
-          });
-      });
-    return () => controller.abort();
-  }, [apiBase, managementKey, version, path, parse]);
-  return { state, refresh };
+    if (enabled) void readActivity(path, parse, false);
+  }, [apiBase, managementKey, generation, path, parse, enabled]);
+  return { state, refresh, refreshing: state.status === 'ready' && state.refreshing };
 }
