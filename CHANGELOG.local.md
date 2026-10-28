@@ -2,6 +2,8 @@
 
 ## 8.0.44-local.1
 
-- Start the proxy and V1 subscription monitor at macOS login and restart them after a process exits.
-- Deploy tested binaries and the verified management panel from clean, pushed `main` with build identity checks and rollback.
+- Start the main proxy on port 8317 at macOS login and restart it after a process exits.
+- Deploy the tested binary and the verified management panel from clean, pushed `main` with build identity checks and rollback.
 - Preserve the existing configuration, credentials, and history databases during updates.
+- Keep the runtime on the SSD and authorize removable-volume access through a stable macOS launcher.
+- Leave the separate V1 monitor on port 8318 outside service and deployment operations.

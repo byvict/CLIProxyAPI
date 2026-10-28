@@ -146,7 +146,7 @@ CLIProxyAPI Guides: [https://help.router-for.me/](https://help.router-for.me/)
 ## Local macOS service
 
 For the local fork, follow [Keep the local app available on macOS](docs/macos-app.md)
-to integrate, version, deploy, and operate the proxy and subscription monitor.
+to integrate, version, deploy, and operate the main proxy on port 8317.
 
 ## Management API
 

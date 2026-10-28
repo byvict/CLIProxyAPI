@@ -1,15 +1,15 @@
-# Keep the local app available on macOS
+# Keep the main proxy available on macOS
 
-Use the same delivery sequence as Fin Dash: integrate into the definitive `main`,
-validate there, push, deploy, and confirm the running commit. This guide applies to
-the local fork at `byvict/CLIProxyAPI`. Keep `origin` for upstream reads and push local
-changes to `fork`.
+Use the Fin Dash delivery sequence: integrate into the definitive `main`, validate
+there, push, deploy, and confirm the running commit. This guide applies to
+`byvict/CLIProxyAPI` and the main panel on port 8317. The separate V1 monitor on
+port 8318 stays outside these service and deployment commands.
 
 ## Integrate and version a change
 
-1. Start from `fork/main`, which contains the local management panel and history features.
-2. Update `VERSION` and `CHANGELOG.local.md` for each delivered batch. Increment the
-   local number in `8.0.44-local.N`. The first three numbers identify the upstream baseline.
+1. Start from `fork/main`, which contains the local panel and history features.
+2. Update `VERSION` and `CHANGELOG.local.md` for each delivered batch. Increment
+   the local number in `8.0.44-local.N`. The first numbers identify the upstream baseline.
 3. Run the applicable tests and commit the change on its work branch.
 4. In `/Users/victorbaccega/CLIProxyAPI`, confirm that the working tree is clean.
 5. Run `git fetch fork` and `git merge --ff-only fork/main` on `main`.
@@ -19,12 +19,41 @@ changes to `fork`.
 8. Run `git push fork main` and deploy from the definitive checkout.
 
 If a change uses a pull request, target the fork's `main` and integrate the merged
-result before deployment. The upstream `dev` integration policy applies to the
-upstream repository. Merge alone does not replace the local executables.
+result before deployment. Push local changes to `fork`; keep `origin` for upstream
+reads. The upstream `dev` policy applies to the upstream repository.
+
+## Authorize the SSD once
+
+The runtime stays at `/Volumes/Arquivos/cliproxyapi-original`, including configuration,
+credentials, databases, and releases. macOS requires permission before a background
+service can access this removable volume.
+
+Install the stable launcher with Go in `PATH`:
+
+```sh
+bash scripts/install-macos-launcher.sh
+open -n "$HOME/Applications/CLIProxyAPI Service.app" --args --check /Volumes/Arquivos/cliproxyapi-original
+```
+
+Allow removable-volume access in the macOS prompt. Confirm **CLIProxyAPI Service >
+Volumes Removíveis** in **System Settings > Privacy & Security > Files and Folders**.
+The launcher does not require Full Disk Access.
+
+Verify access through launchd before stopping the manual installation:
+
+```sh
+python3 -B scripts/macos-app.py check-access
+```
+
+Expect `Runtime access verified through launchd.` This command leaves the running
+proxy untouched. Deployment repeats this check before activation.
+
+The launcher lives in `~/Applications/CLIProxyAPI Service.app`. It starts the selected
+proxy binary on the SSD and forwards termination signals. Normal deployments retain
+this launcher and its macOS privacy identity. The installer leaves an existing launcher
+in place. If its source needs an update, replace it explicitly and authorize it again.
 
 ## Deploy the integrated version
-
-On the current Mac, run:
 
 ```sh
 cd /Users/victorbaccega/CLIProxyAPI
@@ -35,44 +64,36 @@ The command uses the existing Go toolchain recorded in
 `/Volumes/Arquivos/cliproxyapi-build/toolchain-bin-path.txt` and the installed Bun 1.4.3.
 On another Mac, make Go, Bun 1.4.3, Git, and Python 3.9 or newer available in `PATH`.
 
-The command requires a clean `main` that matches the pushed `fork/main`. It runs the
-service deployment tests and `go test ./...`, checks Go formatting, builds both Go
-programs with version and commit metadata, and builds the pinned management panel.
-The panel build runs its tests, type checks, lint, and production build.
-A source change during the build aborts deployment before activation.
+Deployment requires a clean `main` matching the pushed `fork/main`. It runs the
+macOS deployment tests and `go test ./...`, checks Go formatting, builds the proxy
+with version and commit metadata, and builds the pinned management panel. The panel
+build runs its tests, type checks, lint, and production build. A source change during
+the build aborts activation.
 
-The release contains both binaries, `management.html`, and a `release.json` with
-SHA-256 checksums. Releases stay under
-`/Volumes/Arquivos/cliproxyapi-original/releases/`. The `current` link selects the
-release. Redeployment checks existing artifacts against their manifest. A different
-commit requires a different `VERSION`.
+Each release contains `cli-proxy-api`, `management.html`, and a `release.json` with
+SHA-256 checksums under `/Volumes/Arquivos/cliproxyapi-original/releases/`. The
+`current` link selects the release. Redeployment checks artifacts against their
+manifest. A different commit requires a different `VERSION`.
 
-Deployment restarts both LaunchAgents and waits for both `/healthz` endpoints to
-return the release's version and full commit. It also checks the served panel's
-SHA-256. A failed activation restores the previous release and checks its health.
+Deployment restarts `com.byvict.cliproxyapi`, waits for `/healthz` on port 8317 to
+return the release's version and full commit, and verifies the served panel's SHA-256.
+A failed activation restores the previous managed release and checks its health.
 Concurrent service operations are rejected by a filesystem lock.
 
 Keep `management.disable-auto-update-panel: true` in the existing configuration.
-The proxy serves the panel from the selected release through `MANAGEMENT_STATIC_PATH`.
-Deploy does not rewrite configuration, auth files, access keys, or history databases.
-It uses the existing installations and stops if their directories are missing.
+The launcher sets `MANAGEMENT_STATIC_PATH` to the selected release's panel.
+Deployment preserves configuration, credentials, and history databases.
 
-## Replace the manual installation once
+For the first installation, prepare and validate the release before stopping the
+legacy proxy with its existing `Parar.command`. Deploy the prepared release and
+check its health. If this first activation fails, use the preserved legacy startup
+command to restore service. Leave the monitor on port 8318 running as before.
 
-1. Build and validate the release before stopping the installed processes.
-2. Back up the existing startup shortcuts and record both process IDs and executable paths.
-3. Stop the two legacy tmux sessions with their existing `Parar.command` shortcuts.
-4. Deploy the prepared release. On a first-install failure, the command unloads both
-   new agents. Use the preserved legacy startup commands to restore service.
-5. Run the status command below and compare the served panel with the built artifact.
-6. Send `SIGTERM` to each agent once and confirm that `launchd` creates new PIDs and
-   that both health endpoints still identify the expected commit.
+A successful deploy replaces the proxy's `Iniciar.command` and `Parar.command` with
+launchd commands. Their first versions remain in `.before-launchd` files.
+`Abrir-painel.command` keeps working.
 
-The successful first deploy replaces `Iniciar.command` and `Parar.command` in each
-installation with launchd commands. Their first versions remain in `.before-launchd`
-files. Existing `Abrir-painel.command` shortcuts keep working.
-
-## Check or control the services
+## Check or control the service
 
 ```sh
 python3 -B scripts/macos-app.py status
@@ -82,25 +103,21 @@ python3 -B scripts/macos-app.py start
 python3 -B scripts/macos-app.py uninstall
 ```
 
-`stop` unloads both jobs for the current login. `start` loads them again and checks
-release health. `uninstall` also removes their plists and preserves runtime data.
-`rollback` switches to the last managed release. The original tmux binaries remain
-available for first-install recovery.
+`stop` unloads the proxy job for the current login. `start` loads it again and checks
+release health. `uninstall` also removes its plist and preserves runtime data.
+`rollback` switches to the previous managed release.
 
-Open the panels at:
+Open <http://127.0.0.1:8317/management.html>. The LaunchAgent plist is
+`~/Library/LaunchAgents/com.byvict.cliproxyapi.plist`. It uses `RunAtLoad` and `KeepAlive`.
+Logs are `~/Library/Logs/CLIProxyAPI/launchd.stdout.log` and `launchd.stderr.log`.
 
-- Proxy: <http://127.0.0.1:8317/management.html>
-- V1 monitor: <http://127.0.0.1:8318>
+After installation, send `SIGTERM` to the LaunchAgent once. Confirm that launchd
+creates a new PID and that health still reports the expected commit.
 
-The LaunchAgents are `com.byvict.cliproxyapi` and `com.byvict.cliproxyapi.monitor` in
-`~/Library/LaunchAgents/`. Both use `RunAtLoad` and `KeepAlive`. Logs are
-`logs/launchd.stdout.log` and `logs/launchd.stderr.log` in each existing installation.
+Keep the Mac powered on and awake, the SSD mounted, and the user logged in. Locking
+the screen is supported. After a restart, unlock FileVault and log in; launchd then
+starts the service. A reboot is a separate acceptance check and stays unverified
+until performed.
 
-Keep the Mac powered on and awake, the SSD mounted, and the operational user logged
-in. Locking the screen is supported. After a restart, unlock FileVault and log in;
-launchd then starts the services without opening a terminal. A reboot is a separate
-acceptance check and must be reported as unverified until performed.
-
-The V1 monitor's existing background collection continues while its panel is closed.
 The main panel's quota collection still requires an open panel. This installation
 does not change collection schedules, session lifetimes, or provider authentication.

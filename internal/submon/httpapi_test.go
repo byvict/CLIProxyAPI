@@ -7,8 +7,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/router-for-me/CLIProxyAPI/v8/internal/buildinfo"
 )
 
 func testAPI(t *testing.T) (http.Handler, *store, string) {
@@ -44,21 +42,6 @@ func requestAPI(h http.Handler, method, path, body, key, origin, host string, co
 	h.ServeHTTP(w, req)
 	return w
 }
-func TestHealthIdentifiesBuildWithoutCredentials(t *testing.T) {
-	h, _, _ := testAPI(t)
-	w := requestAPI(h, "GET", "/healthz", "", "", "", "127.0.0.1:8318", nil)
-	var body map[string]string
-	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
-		t.Fatal(err)
-	}
-	if w.Code != 200 || body["status"] != "ok" || body["version"] != buildinfo.Version || body["commit"] != buildinfo.Commit || body["build_date"] != buildinfo.BuildDate {
-		t.Fatalf("unexpected build health: %d %s", w.Code, w.Body.String())
-	}
-	if w := requestAPI(h, "GET", "/healthz", "", "", "", "evil.test:8318", nil); w.Code != 403 {
-		t.Fatal("health bypassed host validation")
-	}
-}
-
 func TestHTTPAuthenticationHostOriginAndEmail(t *testing.T) {
 	h, _, id := testAPI(t)
 	host := "127.0.0.1:8318"
