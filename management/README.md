@@ -5,6 +5,48 @@ This directory extends the complete upstream CLI Proxy API Management Center.
 navigation, compact quota cards, and quota timeline. `src/` hosts Quota History inside the same React app.
 All existing providers, OAuth, configuration, logs, and plugin pages remain in the build.
 
+## Delegation observatory
+
+**Agentes** follows **Performance** at `#/delegation`. It separates the complete local
+dispatch census from the explicitly inspected contribution subset. Date, project,
+role, and child-model filters preserve unknown outcomes. Root-family and immediate
+dispatcher-family matrices use different historical identities. Acceptance rates
+count inspected dispatches with a used contribution; application rates exclude
+uninspected applications and verification artifacts where source-code application
+does not apply. Complete-panel exclusivity requires every roster member in the
+selected cohort. Shared causes count once, and source references remain inspectable.
+
+`GET /v8/management/delegation` uses the existing management authentication. It reads
+`delegation-observatory/publication.json` beside the proxy configuration, verifies the
+versioned generation path and SHA-256, and returns a typed projection. Raw prompts,
+results, private paths and unrecognized fields are not returned. Missing publication
+is unavailable; malformed or incomplete publication fails rather than becoming zero.
+The response is `no-store`; filters and evidence expansion run locally after one read.
+
+The [observatory pipeline](../scripts/delegation-observatory/README.md) owns read-only
+T3 collection, revisioned judgments, a nonblocking writer lock, validation and atomic
+publication. Seed it with reviewed evidence, then let the existing daily T3 routine
+collect new metadata and use a Sol auditor for bounded semantic judgments. Collection
+alone never marks work as used. The page does not create a scheduler, call providers,
+or modify allocation policy. Local persisted history excludes unreported native
+work, purged data and remote history not imported locally. Selected observations
+are not a causal ranking of families, and missing token costs are not estimated.
+
+Verify the built page against an isolated proxy and a reviewed generation:
+
+```sh
+PLAYWRIGHT_MODULE=/absolute/playwright/index.mjs node scripts/delegation-ui-check.mjs \
+  http://127.0.0.1:18337 /absolute/fixture /absolute/ui-evidence
+```
+
+The fixture contains `management.key`, the published generation, and independently
+audited `expected-metrics.json` totals (`work`, `evaluated`, `used`, `applied`,
+`applicationEvaluated`, `allExclusive`, `panels`, `reviewUsed`, `reviewEvaluated`).
+The checker reads the real authenticated endpoint for its primary assertions and
+uses synthetic responses only for unavailable, empty and error states. It verifies
+filters, root/dispatcher selection, source references, mobile layout and existing
+navigation. External provider requests are disabled in the fixture.
+
 Quota History reuses the v1 markup, CSS, chart renderer, filters, and keyboard
 interaction from `v1-source/`. The build verifies the reference hashes and extracts
 only the history functions. A shadow root contains the v1 styles within the original

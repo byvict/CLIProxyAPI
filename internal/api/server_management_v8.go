@@ -40,6 +40,7 @@ func (s *Server) registerManagementV8Routes() {
 	v8.GET("/observability/usage/api-keys", s.mgmt.GetAPIKeyUsage)
 	v8.GET("/observability/usage/queue", s.mgmt.GetUsageQueue)
 	v8.GET("/performance", s.mgmt.GetPerformance)
+	v8.GET("/delegation", s.mgmt.GetDelegation)
 	v8.GET("/infra/github", s.mgmt.GetGitHubInfra)
 	v8.POST("/infra/github", s.mgmt.ConnectGitHubInfra)
 	v8.GET("/quota-history", s.mgmt.GetQuotaHistory)

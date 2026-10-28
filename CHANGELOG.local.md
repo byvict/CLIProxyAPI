@@ -1,5 +1,11 @@
 # Local releases
 
+## 8.0.44-local.4
+
+- Add the Agentes dashboard for real T3 dispatches, inspected contributions, root/delegate family comparisons and complete-panel exclusivity.
+- Publish validated, sanitized audit generations through the existing authenticated management API, with explicit unknown outcomes and evidence references.
+- Add a read-only collector, revisioned judgment store and atomic publisher for the daily T3 audit.
+
 ## 8.0.44-local.3
 
 - Refresh every provider's quota every 30 minutes while the panel is visible.
