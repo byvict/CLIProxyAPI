@@ -57,14 +57,46 @@ quota endpoint can issue an API key. Poll reservations persist across tabs and
 panel restarts. Collection stops when the panel closes. History remains
 on the server between sessions. Every successful quota reader, including manual
 refreshes and resets, records observations through the same adapter wrapper.
-Forecasts use observations inside the preceding X hours, where X is the time remaining
-until reset. A partial history produces a visible estimate with its observed coverage.
-Gaps, resets, and adjustments are excluded from consumption. Stale data or fewer than
-two valid consumption intervals suspend the estimate.
+The timeline estimates the remaining lifetime from the last 24 hours of the current
+quota cycle. Shorter quota windows use their own duration. A changed reset or an
+upward balance adjustment starts a new segment. Observed idle time counts; missing
+intervals do not count as zero consumption. The base does not shrink as reset approaches.
 
-The exhaustion marker extrapolates the current balance even when exhaustion falls
-after reset. Its color uses the absolute distance from reset: green through 6 hours,
-blue through 12 hours, yellow through 24 hours, and red beyond 24 hours.
+An estimate requires at least one observed hour and two valid intervals. The panel
+labels it provisional until the requested base reaches 24 hours (or the window's
+shorter duration), coverage reaches 80%, and the measured decline reaches 2 percentage
+points. Coverage measures observed time within the eligible part of this cycle;
+it is distinct from the age of the cycle and is not a confidence score.
+
+The last six hours also provide a stability check. If they contain at least 4.8
+observed hours and their rate is less than half or more than twice the baseline
+rate, the panel reports a changing pace and suppresses the date. These thresholds
+are operational disclosure rules, not statistically calibrated confidence bounds.
+An absence of measured decline is labeled "no detectable drop in observed intervals".
+
+The summary expands with a click or keyboard to show the base, observed duration,
+coverage, decline, hourly rate, and reading age. Provisional markers are dashed.
+Dates are approximate, and the estimate assumes the observed pace continues.
+If the balance lasts until reset, the panel reports that outcome without drawing
+an exhaustion marker after renewal. Marker colors describe how far an exhaustion
+before reset falls from renewal, not the reliability of the prediction.
+
+Replay the legacy and proposed methods against recorded outcomes without writing
+to the database:
+
+```sh
+git show dbec77b3:management/src/features/quotaHistory/projection.ts > /absolute/evidence/legacy-projection.ts
+# Replace its missing upstream duration import with: const HOUR_MS = 3_600_000;
+bun scripts/backtest-quota-projection.ts /absolute/quota-history.sqlite /absolute/evidence/legacy-projection.ts > /absolute/evidence/backtest.json
+```
+
+The replay uses hourly origins, same-cycle outcomes at six and 24 hours, and the
+same eligible observations for all three methods: legacy, whole current cycle,
+and the proposed capped current cycle. It reports excluded estimates, signed and
+absolute balance errors, false exhaustion warnings, and missed exhaustion. It
+uses no future readings in its inputs and exports no account identifiers.
+Overlapping outcomes are correlated. Sparse histories and no observed exhaustion
+cannot establish a calibrated probability or prove that warnings improved.
 
 To verify the built UI with synthetic credentials, create an isolated fixture:
 

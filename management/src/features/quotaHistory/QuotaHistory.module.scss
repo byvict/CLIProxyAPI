@@ -8,6 +8,9 @@
 }
 .exhaustionMarker {
   background: var(--marker-color);
+  &[data-provisional] {
+    background: repeating-linear-gradient(to bottom, var(--marker-color) 0 5px, transparent 5px 9px);
+  }
   &[data-band='green'] {
     --marker-color: color-mix(in srgb, var(--viz-success) 75%, var(--text-tertiary));
   }
@@ -19,6 +22,21 @@
   }
   &[data-band='red'] {
     --marker-color: color-mix(in srgb, var(--error-color) 85%, var(--text-tertiary));
+  }
+}
+.projectionSummary {
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.5;
+  margin-top: 5px;
+  overflow-wrap: anywhere;
+
+  summary {
+    cursor: pointer;
+  }
+
+  p {
+    margin: 6px 0 0;
   }
 }
 .projectionStatus {

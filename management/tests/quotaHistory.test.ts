@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import '../src/i18n/index';
+import { ProjectionSummary } from '../src/features/quotaHistory/ProjectionSummary';
 import { ExhaustionMarker } from '../src/features/quotaHistory/ExhaustionMarker';
 import { quotaObservations } from '../src/features/quotaHistory/observations';
 import { buildTimelineLane } from '../src/features/quota/quotaTimelineModel';
@@ -10,6 +11,33 @@ const now = Date.parse('2026-10-27T15:00:00Z');
 const hour = 3_600_000;
 
 describe('quota history', () => {
+  test('shows reset survival without an exhaustion marker and exposes the basis', () => {
+    const projection = {
+      status: 'survives-reset' as const,
+      remainingAtReset: 30,
+      lookbackHours: 6,
+      observedHours: 6,
+      coverage: 1,
+      consumedPp: 13,
+      ratePpH: 2,
+      observedAtMs: now,
+      provisional: true,
+    };
+    expect(
+      renderToStaticMarkup(
+        createElement(ExhaustionMarker, {
+          projection,
+          startMs: now,
+          endMs: now + hour,
+        })
+      )
+    ).toBe('');
+    const summary = renderToStaticMarkup(createElement(ProjectionSummary, { projection, now }));
+    expect(summary).toContain('Expected to last until reset');
+    expect(summary).toContain('Provisional');
+    expect(summary).toContain('100% coverage');
+    expect(summary).toContain('<details');
+  });
   test('keeps account and model-scoped percentage windows independent', () => {
     const samples = quotaObservations(
       'a',
@@ -53,7 +81,9 @@ describe('quota history', () => {
         'meta',
         {
           status: 'success',
-          data: { windows: [{ id: 'weekly', usedPercent: 40, resetAt: (now + hour) / 1000 }] },
+          data: {
+            windows: [{ id: 'weekly', usedPercent: 40, resetAt: (now + hour) / 1000 }],
+          },
         },
       ],
       [
@@ -64,7 +94,12 @@ describe('quota history', () => {
             {
               id: 'models',
               buckets: [
-                { id: 'a', remainingFraction: 0.6, resetAtMs: now + hour, periodHours: 168 },
+                {
+                  id: 'a',
+                  remainingFraction: 0.6,
+                  resetAtMs: now + hour,
+                  periodHours: 168,
+                },
               ],
             },
           ],
@@ -88,24 +123,32 @@ describe('quota history', () => {
       ],
     ] as const) {
       const observations = quotaObservations('a', provider, quota, now);
-      const lane = buildTimelineLane({ name: 'a', displayName: 'a', provider, quota });
+      const lane = buildTimelineLane({
+        name: 'a',
+        displayName: 'a',
+        provider,
+        quota,
+      });
       expect(observations[0].windowId).toBe(lane.windowId);
       expect(observations[0].resetAtMs).toBe(lane.anchorMs);
       expect(observations[0].remaining).toBe(60);
     }
   });
-  test('keeps an after-reset projection beyond the visible chart discoverable', () => {
+  test('keeps a before-reset projection beyond the visible chart discoverable', () => {
     const markup = renderToStaticMarkup(
       createElement(ExhaustionMarker, {
         projection: {
           status: 'projected',
           exhaustsAtMs: now + 90 * hour,
-          resetAtMs: now + 24 * hour,
+          resetAtMs: now + 120 * hour,
           lookbackHours: 24,
           ratePpH: 1,
           band: 'red',
           observedHours: 12,
           coverage: 0.5,
+          consumedPp: 12,
+          observedAtMs: now,
+          provisional: true,
         },
         startMs: now - hour,
         endMs: now + 48 * hour,
@@ -114,6 +157,6 @@ describe('quota history', () => {
     expect(markup).toContain('data-band="red"');
     expect(markup).toContain('data-outside="after"');
     expect(markup).toContain('tabindex="0"');
-    expect(markup).toContain('66.0');
+    expect(markup).toContain('Provisional');
   });
 });

@@ -41,12 +41,11 @@ describe('symmetric exhaustion bands around reset', () => {
       });
     }
   }
-  test('projects after reset without adding renewed quota', () => {
+  test('reports surviving the reset instead of a hypothetical exhaustion', () => {
     const projection = quotaProjection(samples(36, 1), now);
-    expect(projection.status).toBe('projected');
-    if (projection.status !== 'projected') throw new Error('Expected a projection');
-    expect(projection.exhaustsAtMs).toBe(now + 36 * HOUR_MS);
-    expect(projection.band).toBe('blue');
+    expect(projection.status).toBe('survives-reset');
+    if (projection.status !== 'survives-reset') throw new Error('Expected a reset outcome');
+    expect(projection.remainingAtReset).toBe(12);
     expect(projection.lookbackHours).toBe(24);
   });
   test('projects before reset at the corresponding symmetric band', () => {
@@ -56,33 +55,32 @@ describe('symmetric exhaustion bands around reset', () => {
     expect(projection.exhaustsAtMs).toBe(now + 12 * HOUR_MS);
     expect(projection.band).toBe('blue');
   });
-  test('uses exactly the preceding X hours, including the boundary overlap', () => {
-    const history = samples(24, 1);
-    history[0].remaining = 90;
+  test('uses a fixed 24-hour lookback, including the boundary overlap', () => {
+    const history = samples(12, 1);
     const projection = quotaProjection(history, now + 2.5 * 60_000);
     expect(projection.status).toBe('projected');
     if (projection.status !== 'projected') throw new Error('Expected a projection');
-    expect(projection.lookbackHours).toBeCloseTo(24 - 2.5 / 60);
+    expect(projection.lookbackHours).toBe(24);
     expect(projection.ratePpH).toBeCloseTo(1);
   });
   test('shows a projection with explicit coverage when X hours are not yet collected', () => {
-    const projection = quotaProjection(samples(24, 1).slice(144), now);
+    const projection = quotaProjection(samples(12, 1).slice(144), now);
     expect(projection.status).toBe('projected');
     if (projection.status !== 'projected') throw new Error('Expected a projection');
     expect(projection.lookbackHours).toBe(24);
     expect(projection.observedHours).toBeCloseTo(12);
     expect(projection.coverage).toBeCloseTo(0.5);
-    expect(projection.exhaustsAtMs).toBe(now + 24 * HOUR_MS);
+    expect(projection.exhaustsAtMs).toBe(now + 12 * HOUR_MS);
   });
   test('excludes gaps, resets and adjustments and reports partial coverage', () => {
-    const complete = samples(24, 1);
+    const complete = samples(12, 1);
     const gap = [...complete.slice(0, 12), ...complete.slice(18)];
     const projection = quotaProjection(gap, now);
     expect(projection.status).toBe('projected');
     if (projection.status !== 'projected') throw new Error('Expected a projection');
     expect(projection.ratePpH).toBeCloseTo(1);
     expect(projection.coverage).toBeLessThan(1);
-    const adjusted = samples(24, 1);
+    const adjusted = samples(12, 1);
     adjusted.slice(12).forEach((sample) => {
       sample.remaining += 10;
     });
@@ -94,24 +92,26 @@ describe('symmetric exhaustion bands around reset', () => {
   test('has no finite exhaustion marker for a zero consumption rate', () => {
     expect(quotaProjection(samples(24, 0), now).status).toBe('no-consumption');
   });
-  test('uses the full lookback across a confirmed reset without counting replenishment', () => {
-    const history = samples(24, 1);
+  test('restricts the lookback to the confirmed cycle', () => {
+    const history = samples(12, 1);
     const oldReset = now - 12 * HOUR_MS;
     history.forEach((sample) => {
       if (sample.observedAtMs < oldReset) {
         sample.resetAtMs = oldReset;
         sample.remaining = (oldReset - sample.observedAtMs) / HOUR_MS;
+      } else {
+        sample.resetAtMs = now + 156 * HOUR_MS;
       }
     });
     const projection = quotaProjection(history, now);
     expect(projection.status).toBe('projected');
     if (projection.status !== 'projected') throw new Error('Expected a projection');
     expect(projection.ratePpH).toBeCloseTo(1);
-    expect(projection.lookbackHours).toBe(24);
-    expect(projection.band).toBe('green');
+    expect(projection.lookbackHours).toBe(12);
+    expect(projection.band).toBe('red');
   });
   test('suspends stale observations and passed resets', () => {
-    expect(quotaProjection(samples(24, 1), now + HOUR_MS).status).toBe('stale');
-    expect(quotaProjection(samples(24, 1), reset).status).toBe('reset-passed');
+    expect(quotaProjection(samples(12, 1), now + HOUR_MS).status).toBe('stale');
+    expect(quotaProjection(samples(12, 1), reset).status).toBe('reset-passed');
   });
 });
