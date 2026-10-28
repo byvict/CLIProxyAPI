@@ -1,5 +1,10 @@
 # Local releases
 
+## 8.0.44-local.12
+
+- Standardize the Antigravity quota card summary to show its plan as plain text without model-group quota bars.
+- Render the xAI subscription plan (`SuperGrok Heavy`) as plain text instead of a badge on quota summary cards.
+
 ## 8.0.44-local.11
 
 - Show quota timeline bars and eligible forecasts from recorded observations before provider replies, preserving timestamps and unknown states.
