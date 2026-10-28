@@ -51,12 +51,29 @@ inactive historical accounts, keeps different capacity bases separate,
 preserves failure barriers, and backs up the destination before writing. Use
 `--dry-run` to inspect matched providers without changing either database.
 
-The connected panel collects quota readings every five minutes through the
-existing provider readers. Muse keeps a 30-minute minimum interval because its
-quota endpoint can issue an API key. Poll reservations persist across tabs and
-panel restarts. Collection stops when the panel closes. History remains
-on the server between sessions. Every successful quota reader, including manual
+The connected panel loads native provider quotas when opened, even if a recent
+poll reservation exists and the browser cache is empty. It refreshes every five
+minutes through the existing provider readers. Collection pauses while the panel
+is hidden and checks for due readings when it becomes visible again. Each batch
+finishes before another starts. Failed readings display the provider error and
+retry on the next collection. Muse keeps a 30-minute minimum interval, including
+reopening, because its quota endpoint can issue an API key. Poll reservations
+persist across tabs and panel restarts. Collection stops when the panel closes.
+History remains on the server between sessions. Every successful quota reader, including manual
 refreshes and resets, records observations through the same adapter wrapper.
+
+Verify automatic loading, polling, visibility, slow requests, recovery, and the
+Muse interval against the production build with synthetic responses and a controlled
+browser clock:
+
+```sh
+PLAYWRIGHT_MODULE=/absolute/playwright/index.mjs node scripts/quota-auto-refresh-ui-check.mjs \
+  /absolute/management-build /absolute/auto-refresh-evidence
+```
+
+Set `PLAYWRIGHT_CHROMIUM_EXECUTABLE` to use an existing Chrome binary. The checker
+intercepts all requests and does not use live credentials.
+
 The timeline estimates the remaining lifetime from the last 24 hours of the current
 quota cycle. Shorter quota windows use their own duration. A changed reset or an
 upward balance adjustment starts a new segment. Observed idle time counts; missing

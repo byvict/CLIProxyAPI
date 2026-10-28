@@ -1,5 +1,11 @@
 # Local releases
 
+## 8.0.44-local.2
+
+- Load native quota cards when reopening the panel, even after a recent poll.
+- Refresh every five minutes while visible, resume on return, and wait for each batch to finish.
+- Show quota read errors and retry automatically. Preserve Muse's 30-minute minimum interval.
+
 ## 8.0.44-local.1
 
 - Start the main proxy on port 8317 at macOS login and restart it after a process exits.
