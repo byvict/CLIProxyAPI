@@ -31,7 +31,7 @@ const observations = [
   ...history('claude', 'seven-day', 24, 84, 0.2, 2),
   ...history('xai', 'weekly', 24, 94, 0.1, 6).map(s => ({...s, remaining: s.observedAtMs >= now - 6 * 3600000 ? 94 : s.remaining})),
 ].sort((a, b) => a.observedAtMs - b.observedAtMs);
-const browser = await chromium.launch({headless: true});
+const browser = await chromium.launch({headless: true, executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE});
 const receipts = [];
 try {
   for (const [version, htmlPath, width] of [
@@ -103,6 +103,20 @@ try {
     if (nextLane) assert(expanded.y + expanded.height <= nextLane.y, 'Expanded explanation must not overlap the next provider');
     await summary.locator('summary').click();
     assert((await timeline.locator('[role="img"]').count()) > 0, 'Timeline must retain its quota bars');
+    const windowMetrics = [];
+    for (const mode of ['Weekly', '5-hour']) {
+      await timeline.getByRole('button', {name: mode, exact: true}).click();
+      const windows = await timeline.locator('[class*="_window_"]').evaluateAll((nodes) => nodes.map((bar) => ({
+        text: bar.innerText.trim(), title: bar.title, width: bar.getBoundingClientRect().width,
+        fill: bar.querySelector('[class*="_windowFill_"]')?.style.width ?? null,
+      })));
+      assert(windows.length > 0, `${mode} must retain its quota windows`);
+      assert(windows.every((bar) => bar.text === ''), `${mode} bars must have no visible percentage or reset label`);
+      assert(windows.every((bar) => bar.title && bar.width > 0), `${mode} bars must retain tooltips and width`);
+      assert(windows.some((bar) => bar.fill !== null), `${mode} must retain the current window fill`);
+      windowMetrics.push({mode, windows});
+    }
+    await timeline.getByRole('button', {name: 'Weekly', exact: true}).click();
     {
       assert(cardMetrics.every((card) => card.bars === 0), 'Summary cards must have no quota bars');
       assert(cardMetrics.every((card) => !card.overflow), 'Cards must fit the viewport');
@@ -120,7 +134,7 @@ try {
       assert(Number(titleWeight) > Number(labelWeight), 'Breakdown title must have stronger weight');
       await page.screenshot({path: `${out}/${version}.png`, fullPage: true});
     }
-    receipts.push({version, width, cards: cardMetrics, timelineBars: await timeline.locator('[role="img"]').count(), timelineText: await timeline.innerText(), errors});
+    receipts.push({version, width, cards: cardMetrics, windowMetrics, timelineBars: await timeline.locator('[role="img"]').count(), timelineText: await timeline.innerText(), errors});
     assert.deepEqual(errors, []);
     await context.close();
   }

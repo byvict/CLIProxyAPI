@@ -1,5 +1,9 @@
 # Local releases
 
+## 8.0.44-local.6
+
+- Remove percentages and reset timestamps inside weekly and 5-hour quota timeline bars, preserving fills and hover details.
+
 ## 8.0.44-local.5
 
 - Show the quota windows table above provider summary cards on desktop and mobile.
