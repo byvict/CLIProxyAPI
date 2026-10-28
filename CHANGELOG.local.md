@@ -1,5 +1,11 @@
 # Local releases
 
+## 8.0.44-local.3
+
+- Refresh every provider's quota every 30 minutes while the panel is visible.
+- Use the same 30-minute reservation interval on the server across tabs and panel restarts.
+- Keep automatic loading on open and Muse's minimum interval.
+
 ## 8.0.44-local.2
 
 - Load native quota cards when reopening the panel, even after a recent poll.

@@ -139,11 +139,7 @@ func (h *Handler) ReserveQuotaHistoryPoll(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "credential not found"})
 		return
 	}
-	interval := 5 * time.Minute
-	if auth.Provider == "meta" {
-		// Muse's quota reader can mint an API key, so retain the monitor's 30-minute floor.
-		interval = 30 * time.Minute
-	}
+	const interval = 30 * time.Minute
 	claimed, err := quotahistory.ReservePoll(c.Request.Context(), h.quotaHistoryPath(), auth.Index, time.Now().UnixMilli(), interval.Milliseconds())
 	if err != nil {
 		log.WithError(err).Error("reserve quota history poll")

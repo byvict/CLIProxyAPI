@@ -74,6 +74,43 @@ func TestQuotaHistoryUsesRegisteredCredentialAndValidatesBatch(t *testing.T) {
 	}
 }
 
+func TestQuotaHistoryPollingUsesThirtyMinutesForEveryProvider(t *testing.T) {
+	for _, provider := range []string{"claude", "codex", "xai", "meta"} {
+		t.Run(provider, func(t *testing.T) {
+			manager := coreauth.NewManager(nil, nil, nil)
+			auth := &coreauth.Auth{ID: "poll-account", FileName: "poll-account.json", Provider: provider}
+			index := auth.EnsureIndex()
+			if _, err := manager.Register(context.Background(), auth); err != nil {
+				t.Fatal(err)
+			}
+			h := NewHandler(&config.Config{}, filepath.Join(t.TempDir(), "config.yaml"), manager)
+			body, err := json.Marshal(map[string]string{"authIndex": index})
+			if err != nil {
+				t.Fatal(err)
+			}
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v8/management/quota-history/poll", bytes.NewReader(body))
+			c.Request.Header.Set("Content-Type", "application/json")
+			before := time.Now()
+			h.ReserveQuotaHistoryPoll(c)
+			if rec.Code != http.StatusOK || !bytes.Contains(rec.Body.Bytes(), []byte(`"claimed":true`)) {
+				t.Fatalf("first poll: %d %s", rec.Code, rec.Body.String())
+			}
+			for _, step := range []struct {
+				minutes int
+				claimed bool
+			}{{29, false}, {31, true}} {
+				claimed, err := quotahistory.ReservePoll(context.Background(), h.quotaHistoryPath(), index,
+					before.Add(time.Duration(step.minutes)*time.Minute).UnixMilli(), (30 * time.Minute).Milliseconds())
+				if err != nil || claimed != step.claimed {
+					t.Fatalf("poll after %d minutes: claimed %v, want %v, error %v", step.minutes, claimed, step.claimed, err)
+				}
+			}
+		})
+	}
+}
+
 func TestQuotaHistoryAllIncludesOlderAccountsWithoutMakingThemCurrent(t *testing.T) {
 	h := NewHandler(&config.Config{}, filepath.Join(t.TempDir(), "config.yaml"), nil)
 	remaining := 33.0

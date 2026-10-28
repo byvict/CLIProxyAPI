@@ -73,7 +73,7 @@ export function QuotaHistoryCollector() {
       } finally {
         running = false;
         if (current()) {
-          timer = window.setTimeout(() => void collect(), 5 * 60_000);
+          timer = window.setTimeout(() => void collect(), 30 * 60_000);
         }
       }
     };

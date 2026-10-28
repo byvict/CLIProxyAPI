@@ -52,7 +52,7 @@ preserves failure barriers, and backs up the destination before writing. Use
 `--dry-run` to inspect matched providers without changing either database.
 
 The connected panel loads native provider quotas when opened, even if a recent
-poll reservation exists and the browser cache is empty. It refreshes every five
+poll reservation exists and the browser cache is empty. It refreshes every thirty
 minutes through the existing provider readers. Collection pauses while the panel
 is hidden and checks for due readings when it becomes visible again. Each batch
 finishes before another starts. Failed readings display the provider error and

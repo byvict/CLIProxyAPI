@@ -15,12 +15,13 @@ const page = await context.newPage();
 const errors = [];
 const reads = [];
 const records = [];
+const polls = [];
 let pendingRead;
 let holdReads = false;
 let failRead = false;
 const start = Date.now();
-const interval = 5 * 60_000;
-const nextPoll = new Map([['fixture-claude', start + interval], ['fixture-meta', start + 30 * 60_000]]);
+const interval = 30 * 60_000;
+const nextPoll = new Map([['fixture-claude', start + interval], ['fixture-meta', start + interval]]);
 const files = ['claude', 'meta'].map((type) => ({ name: `${type}-fixture.json`, type, auth_index: `fixture-${type}`, status: 'active' }));
 page.on('pageerror', (error) => errors.push(error.message));
 await page.clock.install({ time: new Date(start) });
@@ -38,8 +39,9 @@ await page.route('**/*', async (route) => {
   if (path.endsWith('/quota-history/poll')) {
     const now = await page.evaluate(() => Date.now());
     const { authIndex } = request.postDataJSON();
+    polls.push(authIndex);
     const claimed = now >= (nextPoll.get(authIndex) || 0);
-    if (claimed) nextPoll.set(authIndex, now + (authIndex === 'fixture-meta' ? 30 * 60_000 : interval));
+    if (claimed) nextPoll.set(authIndex, now + interval);
     return json({ claimed });
   }
   if (path.endsWith('/requests/api-call')) {
@@ -48,7 +50,7 @@ await page.route('**/*', async (route) => {
     if (url !== 'https://api.anthropic.com/api/oauth/usage' && !url.includes('muse-code/key')) return json({ status_code: 200, body: {} });
     const provider = url.includes('anthropic.com') ? 'claude' : 'meta';
     reads.push(provider);
-    if (holdReads) await new Promise((resolve) => { pendingRead = resolve; });
+    if (holdReads && provider === 'claude') await new Promise((resolve) => { pendingRead = resolve; });
     if (failRead && provider === 'claude') return json({ status_code: 503, body: 'Fixture unavailable' });
     return json({ status_code: 200, body: provider === 'claude' ? usage : { subs_tier_name: 'Muse fixture', is_subs_active: true, subs_usage: { weekly: { used_percent: 30 } } } });
   }
@@ -91,9 +93,11 @@ try {
 
   await page.clock.runFor(interval - 1000);
   assert.equal(count('claude'), 1, 'No early refresh');
+  assert.equal(polls.length, 2, 'Do not poll any provider before thirty minutes');
   await page.clock.runFor(2000);
   await waitForReads('claude', 2);
   await waitForRecords('claude', 2);
+  await waitForReads('meta', 1);
   await page.getByRole('button', { name: 'Refresh quota', exact: true }).first().waitFor();
   await visibility('hidden');
   await page.clock.runFor(interval + 1000);
@@ -115,12 +119,12 @@ try {
   failRead = true;
   await page.clock.runFor(interval + 1000);
   await waitForReads('claude', 5);
-  await page.locator('article').first().getByRole('alert').waitFor();
+  await page.locator('article').first().getByRole('alert').filter({ hasText: /503|Fixture unavailable/ }).waitFor();
   failRead = false;
   await page.clock.runFor(interval + 1000);
   await waitForReads('claude', 6);
   await waitForRecords('claude', 5);
-  await waitForReads('meta', 1);
+  await waitForReads('meta', 5);
   await page.getByText('Muse fixture', { exact: true }).waitFor();
   await page.getByRole('button', { name: 'Refresh quota', exact: true }).first().waitFor();
   await page.screenshot({ path: `${out}/automatic-quotas.png`, fullPage: true });
@@ -129,13 +133,13 @@ try {
   await waitForReads('claude', 7);
   await waitForRecords('claude', 6);
   await page.getByRole('button', { name: 'Refresh quota', exact: true }).first().waitFor();
-  assert.equal(count('meta'), 1, 'Reopening must retain the Muse floor');
+  assert.equal(count('meta'), 5, 'Reopening must retain the Muse floor');
   await page.getByTitle('Logout', { exact: true }).click();
   await page.getByPlaceholder('Enter the management key').waitFor();
   await page.clock.runFor(interval + 1000);
   assert.equal(count('claude'), 7, 'Logout must stop automatic collection');
   assert.deepEqual(errors, []);
-  const receipt = { checks: ['cold start with an existing reservation', 'five-minute refresh', 'hidden pause and visible resume', 'no overlapping batches', 'error recovery', 'Muse thirty-minute floor', 'reload', 'logout cleanup'], reads, errors };
+  const receipt = { checks: ['cold start with an existing reservation', 'thirty-minute refresh for all providers', 'hidden pause and visible resume', 'no overlapping batches', 'error recovery', 'Muse thirty-minute floor', 'reload', 'logout cleanup'], reads, errors };
   await writeFile(`${out}/receipt.json`, JSON.stringify(receipt, null, 2) + '\n');
   console.log(JSON.stringify(receipt));
 } finally {
