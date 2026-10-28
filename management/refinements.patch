@@ -1683,7 +1683,7 @@ diff --git a/src/features/quota/QuotaPage.tsx b/src/features/quota/QuotaPage.tsx
 diff --git a/src/features/quota/providers/types.ts b/src/features/quota/providers/types.ts
 --- a/src/features/quota/providers/types.ts
 +++ b/src/features/quota/providers/types.ts
-@@ -1,9 +1,5 @@
+@@ -1,9 +1,4 @@
 -/**
 - * 额度提供商数据层契约。
 - *
@@ -1691,20 +1691,18 @@ diff --git a/src/features/quota/providers/types.ts b/src/features/quota/provider
 - * 因此可以被 bun:test 纯逻辑测试直接消费。渲染由同目录的 *QuotaBody 组件承担。
 - */
 +import { apiClient } from '@/services/api/client';
-+/** Provider readers and state constructors stay independent of React and styles. */
  
  import type { TFunction } from 'i18next';
  import type {
-@@ -23,7 +19,7 @@
+@@ -23,7 +18,6 @@
  export type QuotaProviderType =
    'antigravity' | 'claude' | 'codex' | 'devin' | 'kimi' | 'meta' | 'plugin' | 'xai';
  
 -/** useQuotaStore 的结构契约（storeSelector/storeSetter 依赖）。 */
-+/** Store shape used by quota adapters. */
  export interface QuotaStore {
    antigravityQuota: Record<string, AntigravityQuotaState>;
    claudeQuota: Record<string, ClaudeQuotaState>;
-@@ -48,10 +44,10 @@
+@@ -48,10 +42,10 @@
    type: QuotaProviderType;
    i18nPrefix: string;
    filterFn: (file: AuthFileItem) => boolean;
@@ -1908,17 +1906,16 @@ diff --git a/src/features/quota/providers/claude/data.ts b/src/features/quota/pr
 diff --git a/src/features/quota/providers/codex/data.ts b/src/features/quota/providers/codex/data.ts
 --- a/src/features/quota/providers/codex/data.ts
 +++ b/src/features/quota/providers/codex/data.ts
-@@ -1,6 +1,7 @@
-+import { apiClient } from '@/services/api/client';
- /**
+@@ -1,7 +1,4 @@
+-/**
 - * Codex 额度数据层：用量窗口 + 套餐 + 重置积分（含消费流程）。
 - * React-free / SCSS-free —— 由 tests/codexQuota.test.ts 直接消费。
-+ * Codex quota windows, plan metadata, and reset credits.
-+ * Independent of React and styles for data-layer tests.
-  */
+- */
++import { apiClient } from '@/services/api/client';
  
  import type { TFunction } from 'i18next';
-@@ -338,7 +339,8 @@
+ import type {
+@@ -338,7 +335,8 @@
  const fetchCodexSubscriptionActiveUntil = async (
    authIndex: string,
    accountId: string | null,
@@ -1928,7 +1925,7 @@ diff --git a/src/features/quota/providers/codex/data.ts b/src/features/quota/pro
  ): Promise<string | number | null> => {
    if (!accountId) return null;
  
-@@ -350,7 +352,7 @@
+@@ -350,7 +348,7 @@
          url: `${CODEX_SUBSCRIPTION_URL}?account_id=${encodeURIComponent(accountId)}`,
          header: requestHeader,
        },
@@ -1937,7 +1934,7 @@ diff --git a/src/features/quota/providers/codex/data.ts b/src/features/quota/pro
      );
      if (result.statusCode < 200 || result.statusCode >= 300) return null;
      return parseCodexSubscriptionActiveUntil(result.body ?? result.bodyText);
-@@ -362,7 +364,8 @@
+@@ -362,7 +360,8 @@
  const fetchCodexResetCredits = async (
    authIndex: string,
    requestHeader: Record<string, string>,
@@ -1947,7 +1944,7 @@ diff --git a/src/features/quota/providers/codex/data.ts b/src/features/quota/pro
  ): Promise<CodexResetCreditsData> => {
    try {
      const result = await apiCallApi.request(
-@@ -377,7 +380,7 @@
+@@ -377,7 +376,7 @@
            Originator: 'Codex Desktop',
          },
        },
@@ -1956,7 +1953,7 @@ diff --git a/src/features/quota/providers/codex/data.ts b/src/features/quota/pro
      );
  
      if (result.statusCode < 200 || result.statusCode >= 300) {
-@@ -415,7 +418,7 @@
+@@ -415,7 +414,7 @@
    }
  };
  
@@ -1965,7 +1962,7 @@ diff --git a/src/features/quota/providers/codex/data.ts b/src/features/quota/pro
    const rawAuthIndex = file['auth_index'] ?? file.authIndex;
    const authIndex = normalizeAuthIndex(rawAuthIndex);
    if (!authIndex) {
-@@ -424,18 +427,10 @@
+@@ -424,18 +423,10 @@
  
    const planTypeFromFile = resolveCodexPlanType(file);
    const subscriptionActiveUntilFromFile = resolveCodexSubscriptionActiveUntil(file);
@@ -1987,7 +1984,7 @@ diff --git a/src/features/quota/providers/codex/data.ts b/src/features/quota/pro
  
    if (result.statusCode < 200 || result.statusCode >= 300) {
      throw createStatusError(getApiCallErrorMessage(result), result.statusCode);
-@@ -450,19 +445,10 @@
+@@ -450,19 +441,10 @@
    const accountCredits = normalizeCodexAccountCredits(payload.credits);
    const resetCredits = payload.rate_limit_reset_credits ?? payload.rateLimitResetCredits ?? null;
    const usageResetCreditsData = normalizeCodexResetCreditsPayload(resetCredits);
@@ -2010,7 +2007,7 @@ diff --git a/src/features/quota/providers/codex/data.ts b/src/features/quota/pro
    const windows = buildCodexQuotaWindows(payload, t);
    return {
      planType,
-@@ -471,8 +457,8 @@
+@@ -471,8 +453,8 @@
      creditsUnlimited: accountCredits.unlimited,
      rateLimitResetCreditsAvailableCount,
      rateLimitResetCreditsApplicableAvailableCount,
@@ -2021,7 +2018,7 @@ diff --git a/src/features/quota/providers/codex/data.ts b/src/features/quota/pro
      windows,
    };
  };
-@@ -491,7 +477,8 @@
+@@ -491,7 +473,8 @@
  
  const consumeCodexRateLimitResetCredit = async (
    file: AuthFileItem,
@@ -2031,7 +2028,7 @@ diff --git a/src/features/quota/providers/codex/data.ts b/src/features/quota/pro
  ): Promise<string> => {
    const rawAuthIndex = file['auth_index'] ?? file.authIndex;
    const authIndex = normalizeAuthIndex(rawAuthIndex);
-@@ -509,7 +496,7 @@
+@@ -509,7 +492,7 @@
      data: JSON.stringify({
        redeem_request_id: createCodexRedeemRequestId(),
      }),
@@ -2040,7 +2037,7 @@ diff --git a/src/features/quota/providers/codex/data.ts b/src/features/quota/pro
  
    if (result.statusCode < 200 || result.statusCode >= 300) {
      throw createStatusError(getApiCallErrorMessage(result), result.statusCode);
-@@ -521,13 +508,13 @@
+@@ -521,13 +504,13 @@
    return authIndex;
  };
  
@@ -2057,7 +2054,7 @@ diff --git a/src/features/quota/providers/codex/data.ts b/src/features/quota/pro
      assertConnection();
      if (result.status !== 'ok' || result.auth_index !== authIndex) {
        throw new Error('Invalid cooldown reset response');
-@@ -536,7 +523,8 @@
+@@ -536,7 +519,8 @@
      // Redemption already succeeded: direct the operator to the existing clear action.
      throw new Error(t('codex_quota.reset_cooldown_failed'));
    }
@@ -2067,7 +2064,7 @@ diff --git a/src/features/quota/providers/codex/data.ts b/src/features/quota/pro
  };
  
  export const CODEX_CONFIG: QuotaProviderData<CodexQuotaState, CodexQuotaData> = {
-@@ -544,6 +532,24 @@
+@@ -544,6 +528,24 @@
    i18nPrefix: 'codex_quota',
    filterFn: (file) => isCodexFile(file) && !isDisabledAuthFile(file),
    fetchQuota: fetchCodexQuota,
@@ -2095,7 +2092,7 @@ diff --git a/src/features/quota/providers/codex/data.ts b/src/features/quota/pro
 diff --git a/src/features/quota/hooks/useQuotaBatchLoader.ts b/src/features/quota/hooks/useQuotaBatchLoader.ts
 --- a/src/features/quota/hooks/useQuotaBatchLoader.ts
 +++ b/src/features/quota/hooks/useQuotaBatchLoader.ts
-@@ -1,12 +1,4 @@
+@@ -1,12 +1,3 @@
 -/**
 - * 混合提供商批量额度加载（原 useQuotaLoader 的跨分区泛化）。
 - *
@@ -2105,11 +2102,10 @@ diff --git a/src/features/quota/hooks/useQuotaBatchLoader.ts b/src/features/quot
 - * - cacheGeneration：断线重连后过期请求不得写入新会话缓存。
 - * 提交按 provider 分组进行 —— 快的提供商先落地，不等慢的。
 - */
-+/** Publish each account independently; request and cache generations reject superseded loads. */
  
  import { useCallback, useRef, useState } from 'react';
  import { useTranslation } from 'react-i18next';
-@@ -14,18 +6,9 @@
+@@ -14,18 +5,9 @@
  import { getStatusFromError } from '@/utils/quota';
  import { getQuotaCacheKey } from '@/utils/quota/identity';
  import type { QuotaFileEntry } from '../logic';
@@ -2129,7 +2125,7 @@ diff --git a/src/features/quota/hooks/useQuotaBatchLoader.ts b/src/features/quot
  
  export function useQuotaBatchLoader() {
    const { t } = useTranslation();
-@@ -65,54 +48,24 @@
+@@ -65,54 +47,24 @@
                });
              });
  
