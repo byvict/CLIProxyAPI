@@ -86,7 +86,7 @@ index 64538b5..0a9b9a5 100644
              afterPlan={claudeAfterPlan}
            />
 diff --git a/src/features/quota/components/QuotaTimeline.module.scss b/src/features/quota/components/QuotaTimeline.module.scss
-index 5cb3a81..c3e6a4c 100644
+index 5cb3a81..8055039 100644
 --- a/src/features/quota/components/QuotaTimeline.module.scss
 +++ b/src/features/quota/components/QuotaTimeline.module.scss
 @@ -101,6 +101,10 @@ $lane-width: 210px;
@@ -211,10 +211,26 @@ index 5cb3a81..c3e6a4c 100644
  }
 
  .window {
-@@ -309,23 +299,17 @@ $lane-width: 210px;
-   font-variant-numeric: tabular-nums;
+@@ -292,7 +282,7 @@ $lane-width: 210px;
+   color: var(--text-quaternary);
  }
 
+-// Consumed portion of the current window, drawn behind its label.
++// Consumed portion of the current window.
+ .windowFill {
+   position: absolute;
+   left: 0;
+@@ -302,30 +292,17 @@ $lane-width: 210px;
+   pointer-events: none;
+ }
+
+-.windowLabel {
+-  position: relative;
+-  overflow: hidden;
+-  text-overflow: ellipsis;
+-  font-variant-numeric: tabular-nums;
+-}
+-
 -// A reset credit is use-it-or-lose-it, so its expiry sits above the window bar
 -// as a narrow amber tick without competing with the bar's own label.
 -.resetCreditTick {
@@ -243,7 +259,7 @@ index 5cb3a81..c3e6a4c 100644
  }
 
  .laneIdle {
-@@ -336,52 +320,6 @@ $lane-width: 210px;
+@@ -336,52 +313,6 @@ $lane-width: 210px;
    color: var(--text-quaternary);
  }
 
@@ -296,7 +312,7 @@ index 5cb3a81..c3e6a4c 100644
  @include mobile {
    // The lane column can't shrink much before names become unreadable, so the
    // chart scrolls horizontally rather than compressing to illegibility.
-@@ -390,7 +328,7 @@ $lane-width: 210px;
+@@ -390,7 +321,7 @@ $lane-width: 210px;
    }
 
    .axis,
@@ -306,7 +322,7 @@ index 5cb3a81..c3e6a4c 100644
    }
  }
 diff --git a/src/features/quota/components/QuotaTimeline.tsx b/src/features/quota/components/QuotaTimeline.tsx
-index 1e4d292..63c79fc 100644
+index 1e4d292..f6a6da5 100644
 --- a/src/features/quota/components/QuotaTimeline.tsx
 +++ b/src/features/quota/components/QuotaTimeline.tsx
 @@ -18,6 +18,19 @@ import { useTranslation } from 'react-i18next';
@@ -566,7 +582,33 @@ index 1e4d292..63c79fc 100644
          {windows.length === 0 ? (
            <span className={styles.laneIdle}>
              {t('quota_management.windows_idle', {
-@@ -425,6 +475,8 @@ function Lane({ lane, span, now, mode, cells, nowPercent, resolvedTheme }: LaneP
+@@ -387,14 +437,6 @@ function Lane({ lane, span, now, mode, cells, nowPercent, resolvedTheme }: LaneP
+           </span>
+         ) : (
+           windows.map((window) => {
+-            // A label needs room to read; below that the bar speaks for itself
+-            // and the detail lives in the tooltip.
+-            const showLabel = window.widthPercent > (mode === 'session' ? 4.5 : 9);
+-            const endText =
+-              mode === 'session'
+-                ? formatTime(window.endMs)
+-                : `${formatDay(window.endMs)} ${formatTime(window.endMs)}`;
+-
+             return (
+               <div
+                 key={window.startMs}
+@@ -414,17 +456,13 @@ function Lane({ lane, span, now, mode, cells, nowPercent, resolvedTheme }: LaneP
+                     style={{ width: `${100 - window.remaining}%` }}
+                   />
+                 )}
+-                {showLabel && (
+-                  <span className={styles.windowLabel}>
+-                    {window.remaining !== null ? `${window.remaining}% · ` : ''}
+-                    {endText}
+-                  </span>
+-                )}
+               </div>
+             );
            })
          )}
 
@@ -575,7 +617,7 @@ index 1e4d292..63c79fc 100644
          {resetCredits.map((credit, index) => {
            const grantedLabel = t('quota_management.windows_credit_granted', {
              defaultValue: 'Granted',
-@@ -446,8 +498,8 @@ function Lane({ lane, span, now, mode, cells, nowPercent, resolvedTheme }: LaneP
+@@ -446,8 +484,8 @@ function Lane({ lane, span, now, mode, cells, nowPercent, resolvedTheme }: LaneP
            return (
              <span
                key={credit.id || `${credit.expiresAtMs}-${index}`}
