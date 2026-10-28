@@ -24,6 +24,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	managementHandlers "github.com/router-for-me/CLIProxyAPI/v8/internal/api/handlers/management"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/buildinfo"
 	claudemodels "github.com/router-for-me/CLIProxyAPI/v8/internal/client/claude/models"
 	codexmodels "github.com/router-for-me/CLIProxyAPI/v8/internal/client/codex/models"
 	proxyconfig "github.com/router-for-me/CLIProxyAPI/v8/internal/config"
@@ -702,13 +703,22 @@ func TestHealthz(t *testing.T) {
 		}
 
 		var resp struct {
-			Status string `json:"status"`
+			Status    string `json:"status"`
+			Version   string `json:"version"`
+			Commit    string `json:"commit"`
+			BuildDate string `json:"build_date"`
 		}
 		if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
 			t.Fatalf("failed to parse response JSON: %v; body=%s", err, rr.Body.String())
 		}
 		if resp.Status != "ok" {
 			t.Fatalf("unexpected response status: got %q want %q", resp.Status, "ok")
+		}
+		if resp.Version != buildinfo.Version || resp.Commit != buildinfo.Commit || resp.BuildDate != buildinfo.BuildDate {
+			t.Fatalf("health does not identify the running build: %+v", resp)
+		}
+		if rr.Header().Get("Cache-Control") != "no-store" {
+			t.Fatal("build health must not be cached")
 		}
 	})
 

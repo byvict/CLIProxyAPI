@@ -143,6 +143,11 @@ PackyCode provides special discounts for our software users: register using <a h
 
 CLIProxyAPI Guides: [https://help.router-for.me/](https://help.router-for.me/)
 
+## Local macOS service
+
+For the local fork, follow [Keep the local app available on macOS](docs/macos-app.md)
+to integrate, version, deploy, and operate the proxy and subscription monitor.
+
 ## Management API
 
 see [MANAGEMENT_API.md](https://help.router-for.me/management/api)

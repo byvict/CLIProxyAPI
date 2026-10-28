@@ -22,6 +22,12 @@ go build -o test-output ./cmd/server && rm test-output # Verify compile (REQUIRE
 - Auth material defaults under `auths/`
 - Storage backends: file-based default; optional Postgres/git/object store (`PGSTORE_*`, `GITSTORE_*`, `OBJECTSTORE_*`)
 
+## Local fork delivery
+- For the `byvict/CLIProxyAPI` installation, follow [docs/macos-app.md](docs/macos-app.md) when integrating, versioning, or deploying.
+- Finish local changes in the definitive checkout at `/Users/victorbaccega/CLIProxyAPI`: integrate into `main`, validate there, and push to `fork`.
+- Update `VERSION` and `CHANGELOG.local.md` for a delivered batch. Changes affecting the installed app finish with `python3 -B scripts/macos-app.py deploy` and both health endpoints confirming the integrated commit.
+- Keep credentials, configuration, and history in the existing runtime directories. A worktree build or a GitHub merge alone is not a deployment.
+
 ## Architecture
 - `cmd/server/` — Server entrypoint
 - `internal/api/` — Gin HTTP API (routes, middleware, modules)

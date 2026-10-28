@@ -19,6 +19,8 @@ jobs:
           cache: true
       - name: Refresh models catalog
         run: bash .github/scripts/refresh-model-catalogs.sh
+      - name: Test macOS deployment logic
+        run: python3 -B -m unittest discover -s scripts -p test_macos_app.py
       - name: Build
         run: |
           go build -o test-output ./cmd/server

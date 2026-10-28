@@ -18,6 +18,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/buildinfo"
 )
 
 //go:embed ui/*
@@ -80,6 +82,13 @@ func (a *api) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	expected := "http://" + r.Host
 	if origin != "" && origin != expected {
 		apiError(w, 403, "Origem não permitida.")
+		return
+	}
+	if r.URL.Path == "/healthz" && r.Method == http.MethodGet {
+		apiJSON(w, http.StatusOK, map[string]string{
+			"status": "ok", "version": buildinfo.Version,
+			"commit": buildinfo.Commit, "build_date": buildinfo.BuildDate,
+		})
 		return
 	}
 	if r.Method == http.MethodGet && (r.URL.Path == "/" || r.URL.Path == "/app.js" || r.URL.Path == "/style.css") {
