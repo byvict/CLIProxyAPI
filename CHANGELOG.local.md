@@ -1,5 +1,9 @@
 # Local releases
 
+## 8.0.44-local.18
+
+- Serve the Performance page from a report kept in memory. The proxy checks its sources every minute and recomputes only when T3's database, the imported history or the São Paulo date changed, so page opens no longer wait 2 to 5 seconds and aborted requests no longer discard the work. The first open after a restart waits for one computation, and a failed computation is retried a minute later.
+
 ## 8.0.44-local.17
 
 - Run the performance history importer from the active release at load and every 15 minutes as the LaunchAgent `com.byvict.cliproxyapi.performance-import`, with its receipt and error log in `~/Library/Logs/CLIProxyAPI/`. `stop`, `uninstall` and `status` cover both jobs.

@@ -3,7 +3,6 @@ package management
 import (
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -17,13 +16,11 @@ import (
 
 func (h *Handler) GetPerformance(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
-	home, err := os.UserHomeDir()
-	if err != nil {
+	if h.activity == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "T3code data directory is unavailable"})
 		return
 	}
-	report, err := performance.ReadActivity(c.Request.Context(), filepath.Join(home, ".t3", "userdata", "statev2.sqlite"),
-		filepath.Join(filepath.Dir(h.configFilePath), "performance-history.sqlite"), time.Now())
+	report, err := h.activity.Report(c.Request.Context())
 	if os.IsNotExist(err) {
 		c.JSON(http.StatusOK, gin.H{"status": "unavailable"})
 		return

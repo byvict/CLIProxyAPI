@@ -1,6 +1,8 @@
 package management
 
 import (
+	"database/sql"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +15,43 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/githubauth"
 )
+
+func TestGetPerformanceServesTheActivityReport(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	get := func(configDir string) (*httptest.ResponseRecorder, map[string]any) {
+		t.Helper()
+		h := NewHandler(&config.Config{}, filepath.Join(configDir, "config.yaml"), nil)
+		recorder := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(recorder)
+		c.Request = httptest.NewRequest(http.MethodGet, "/v8/management/performance", nil)
+		h.GetPerformance(c)
+		var body map[string]any
+		if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		return recorder, body
+	}
+	if recorder, body := get(t.TempDir()); recorder.Code != http.StatusOK || body["status"] != "unavailable" {
+		t.Fatalf("missing sources: %d %v", recorder.Code, body)
+	}
+	configDir := t.TempDir()
+	db, err := sql.Open("sqlite", filepath.Join(configDir, "performance-history.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec(`CREATE TABLE executions (id,provider,session_id,started_ms,completed_ms,input_tokens,output_tokens,partial,source);
+		CREATE TABLE usage_events (provider,session_id,at_ms,input_tokens,output_tokens)`)
+	if errClose := db.Close(); err != nil || errClose != nil {
+		t.Fatal(err, errClose)
+	}
+	recorder, body := get(configDir)
+	activity, _ := body["activity"].(map[string]any)
+	providers, _ := activity["providers"].([]any)
+	if recorder.Code != http.StatusOK || recorder.Header().Get("Cache-Control") != "no-store" || body["status"] != "ready" ||
+		activity["historyImported"] != true || activity["timezone"] != "America/Sao_Paulo" || len(providers) != 4 {
+		t.Fatalf("history report: %d %v", recorder.Code, body)
+	}
+}
 
 type performanceTransport func(*http.Request) (*http.Response, error)
 

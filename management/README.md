@@ -214,6 +214,12 @@ The page shows the first available record and does not infer activity from quota
 If T3code runs under another user or on another machine, the page reports that its
 local history is unavailable.
 
+The server keeps the computed report in memory. It checks its sources every minute
+and recomputes only when the T3 database, the imported history, or the São Paulo date
+changed. The first request after a restart waits for one computation, later requests
+return the latest report, and `generatedAt` records when it was computed. A failed
+recomputation keeps serving the previous report and is retried a minute later.
+
 **Infra** follows **AI Providers** and reuses its header, category list, and resource
 panel layout. It currently supports GitHub through the existing `server.github-token`
 configuration and environment fallback. `GET /v8/management/infra/github` validates

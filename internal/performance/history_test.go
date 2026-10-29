@@ -102,7 +102,7 @@ func TestReadActivityWorksWithoutT3AndDoesNotModifyArchive(t *testing.T) {
 		t.Fatal(err)
 	}
 	before, _ := os.ReadFile(path)
-	report, err := ReadActivity(context.Background(), filepath.Join(t.TempDir(), "missing"), path, time.Date(2026, 10, 27, 15, 0, 0, 0, time.UTC))
+	report, err := readActivity(context.Background(), filepath.Join(t.TempDir(), "missing"), path, time.Date(2026, 10, 27, 15, 0, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +114,7 @@ func TestReadActivityWorksWithoutT3AndDoesNotModifyArchive(t *testing.T) {
 
 func historyTokens(t *testing.T, path string) int64 {
 	t.Helper()
-	report, err := ReadActivity(context.Background(), filepath.Join(t.TempDir(), "missing"), path, time.Date(2026, 10, 27, 15, 0, 0, 0, time.UTC))
+	report, err := readActivity(context.Background(), filepath.Join(t.TempDir(), "missing"), path, time.Date(2026, 10, 27, 15, 0, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatal(err)
 	}
