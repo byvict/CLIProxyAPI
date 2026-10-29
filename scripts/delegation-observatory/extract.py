@@ -136,7 +136,9 @@ def seat(members):
 def stem_edits(before, after):
     if len(after) == len(before) + 1:
         found = [
-            stem_edits(before, after[:i] + after[i + 1 :]) for i in range(len(after))
+            stem_edits(before, after[:i] + after[i + 1 :])
+            for i in range(len(after))
+            if role(after[i]) == "unknown"
         ]
         found = [edits for edits in found if edits is not None]
         return 1 + min(found) if found else None
@@ -191,6 +193,7 @@ def replaced_dispatch(after, siblings, requests, links):
         (before for before in candidates if edits[before["dispatch_id"]] is not None),
         key=lambda before: (
             -edits[before["dispatch_id"]],
+            seat(requests[before["dispatch_id"]][1]) == seat(request[1]),
             before["child"]["family"] == after["child"]["family"],
             timestamp(before["completed_at"]),
         ),

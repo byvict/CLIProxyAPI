@@ -374,6 +374,58 @@ class PipelineTests(unittest.TestCase):
             },
         )
 
+    def test_tier0_marked_replacement_links_its_own_failed_seat(self):
+        for rows, expected in (
+            (
+                [
+                    work_dispatch(
+                        "x-r1-a", "claude", "10:00", "10:05", status="failed"
+                    ),
+                    work_dispatch("x-r1-d", "muse", "10:00", "10:02", status="failed"),
+                    work_dispatch("x-r1-d-claude-fallback", "claude", "10:06", "10:20"),
+                ],
+                {"x-r1-d": "delegate-task:x-r1-d-claude-fallback"},
+            ),
+            (
+                [
+                    work_dispatch(
+                        "y-review-b", "muse", "10:00", "10:03", status="failed"
+                    ),
+                    work_dispatch(
+                        "y-review-a", "muse", "10:00", "10:05", status="failed"
+                    ),
+                    work_dispatch("y-review-b-retry", "muse", "10:06", "10:20"),
+                ],
+                {"y-review-b": "delegate-task:y-review-b-retry"},
+            ),
+        ):
+            links = tier0_links(rows)
+            with self.subTest(expected=expected):
+                self.assertEqual(
+                    {
+                        name: link["replaced_by"]
+                        for name, link in links.items()
+                        if "replaced_by" in link
+                    },
+                    expected,
+                )
+
+    def test_tier0_follow_up_role_task_is_not_a_replacement(self):
+        links = tier0_links(
+            [
+                work_dispatch(
+                    "p-b4-design-a", "claude", "10:00", "10:03", status="interrupted"
+                ),
+                work_dispatch("p-b4-design-b", "gpt", "10:00", "10:02"),
+                work_dispatch("p-b4-design-judge-1", "grok", "10:04", "10:10"),
+                work_dispatch(
+                    "q-interrogate-b", "muse", "11:00", "11:03", status="interrupted"
+                ),
+                work_dispatch("q-interrogate-b-fix", "muse", "11:04", "11:10"),
+            ]
+        )
+        self.assertFalse(any("replaced_by" in link for link in links.values()), links)
+
     def test_round_inventory_keeps_replacements_and_natives_with_their_panel(self):
         dispatches = with_tier0(
             [
@@ -865,7 +917,9 @@ interrogate reviewers: claudeAgent/claude-opus-5-5 effort=xhigh, antigravity/gem
                 self.assertEqual(manifest["auditor_model"], model)
                 self.assertEqual(manifest["owner"], "actual-auditor")
                 audits = pipeline.build(self.root)["disposition_snapshots"]
-                self.assertTrue(any(row.get("auditor_model") == model for row in audits))
+                self.assertTrue(
+                    any(row.get("auditor_model") == model for row in audits)
+                )
 
     def test_judgment_revision_preserves_cause_identity(self):
         bundle = self.base / "judgments"
