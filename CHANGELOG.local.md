@@ -3,6 +3,7 @@
 ## 8.0.44-local.15
 
 - Build releases from `~/Library/Caches/CLIProxyAPI-build` on the internal disk and remove each panel build directory after its artifact is copied.
+- Run the deploy's `go test ./...` as a one-off launchd job, outside T3 Code's process tree, so its loopback port probes cannot fail test servers.
 
 ## 8.0.44-local.14
 

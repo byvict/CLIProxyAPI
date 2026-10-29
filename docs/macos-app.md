@@ -74,6 +74,12 @@ with version and commit metadata, and builds the pinned management panel. The pa
 build runs its tests, type checks, lint, and production build. A source change during
 the build aborts activation.
 
+`go test ./...` runs as the one-off launchd job `com.byvict.cliproxyapi.tests` and writes
+`~/Library/Logs/CLIProxyAPI/deploy-tests.log`. T3 Code probes loopback ports opened by the
+processes it starts, and those probes fail test servers. A launchd job is outside that
+process tree. The job reads the definitive checkout on the internal disk, which needs no
+macOS file permission.
+
 Each release contains `cli-proxy-api`, `management.html`, and a `release.json` with
 SHA-256 checksums under `~/Library/Application Support/CLIProxyAPI/releases/`. The
 `current` link selects the release. Redeployment checks artifacts against their
