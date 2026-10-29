@@ -20,6 +20,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/buildinfo"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/performance"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/pluginhost"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/pluginstore"
 	sdkAuth "github.com/router-for-me/CLIProxyAPI/v8/sdk/auth"
@@ -74,6 +75,7 @@ type Handler struct {
 	pluginReleases          pluginReleaseCache
 	siwcOAuthFactory        func(*config.Config) siwcOAuthService
 	siwcCommitMu            sync.Mutex
+	activity                *performance.Activity
 }
 
 type configReloadSnapshot struct {
@@ -94,6 +96,10 @@ func NewHandler(cfg *config.Config, configFilePath string, manager *coreauth.Man
 		tokenStore:          sdkAuth.GetTokenStore(),
 		allowRemoteOverride: envSecret != "",
 		envSecret:           envSecret,
+	}
+	if home, errHome := os.UserHomeDir(); errHome == nil {
+		h.activity = performance.NewActivity(filepath.Join(home, ".t3", "userdata", "statev2.sqlite"),
+			filepath.Join(filepath.Dir(configFilePath), "performance-history.sqlite"))
 	}
 	rand.Read(h.managementMemoKey[:])
 	h.startAttemptCleanup()

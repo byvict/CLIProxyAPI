@@ -36,9 +36,9 @@ func normalizeProvider(provider string) string {
 	}
 }
 
-// ReadActivity merges imported observations with current T3 turns. Live projections
+// readActivity merges imported observations with current T3 turns. Live projections
 // replace their imported copies. Native tokens replace overlapping turn totals.
-func ReadActivity(ctx context.Context, t3Path, historyPath string, now time.Time) (Report, error) {
+func readActivity(ctx context.Context, t3Path, historyPath string, now time.Time) (Report, error) {
 	turns, err := readT3Turns(ctx, t3Path)
 	if err != nil && !os.IsNotExist(err) {
 		return Report{}, err
