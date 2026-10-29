@@ -1,5 +1,10 @@
 # Local releases
 
+## 8.0.44-local.16
+
+- Run the service from `~/Dev/CLIProxyAPI/app` and build releases in `~/Dev/CLIProxyAPI/build`.
+- Run the deploy's `go test ./...` directly again. The launchd test job is removed.
+
 ## 8.0.44-local.15
 
 - Build releases from `~/Library/Caches/CLIProxyAPI-build` on the internal disk and remove each panel build directory after its artifact is copied.

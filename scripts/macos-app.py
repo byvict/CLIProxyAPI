@@ -19,8 +19,8 @@ import urllib.request
 
 REPO = Path(__file__).resolve().parent.parent
 LABEL = 'com.byvict.cliproxyapi'
-RUNTIME = Path.home() / 'Library/Application Support/CLIProxyAPI'
-BUILD_ROOT = Path.home() / 'Library/Caches/CLIProxyAPI-build'
+RUNTIME = Path.home() / 'Dev/CLIProxyAPI/app'
+BUILD_ROOT = Path.home() / 'Dev/CLIProxyAPI/build'
 
 
 def run(*args, capture=False, check=True, cwd=REPO):
@@ -74,7 +74,7 @@ def build_release(runtime, build_root, info):
         if previous['version'] == info['version'] and previous['commit'] != info['commit']:
             raise RuntimeError('Bump VERSION and update CHANGELOG.local.md before a new release.')
     run('python3', '-B', '-m', 'unittest', 'discover', '-s', 'scripts', '-p', 'test_macos_*.py')
-    run_in_launchd(shutil.which('go') or 'go', 'test', './...')
+    run('go', 'test', './...')
     unformatted = run('gofmt', '-l', 'internal/api/server_routes.go',
                       'internal/api/server_test.go', 'cmd/macos-launcher/main.go', capture=True).stdout.strip()
     if unformatted:
@@ -108,40 +108,6 @@ LAUNCHER_APP = Path.home() / 'Applications/CLIProxyAPI Service.app'
 LAUNCHER = LAUNCHER_APP / 'Contents/MacOS/cliproxyapi-service'
 LOGS = Path.home() / 'Library/Logs/CLIProxyAPI'
 HTTP = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-
-
-def run_in_launchd(*args):
-    # T3 Code probes loopback ports opened by processes it started, which breaks
-    # test servers. A one-off launchd job runs outside that process tree.
-    label = LABEL + '.tests'
-    domain = f'gui/{os.getuid()}'
-    path = Path.home() / 'Library/LaunchAgents' / (label + '.plist')
-    path.parent.mkdir(parents=True, exist_ok=True)
-    LOGS.mkdir(parents=True, mode=0o700, exist_ok=True)
-    log = LOGS / 'deploy-tests.log'
-    log.write_text('')
-    path.write_bytes(plistlib.dumps({
-        'Label': label, 'ProgramArguments': list(args), 'WorkingDirectory': str(REPO),
-        'EnvironmentVariables': {name: os.environ[name] for name in
-                                 ('PATH', 'GOCACHE', 'GOPATH', 'GOMODCACHE') if name in os.environ},
-        'RunAtLoad': True, 'KeepAlive': False, 'ProcessType': 'Interactive',
-        'StandardOutPath': str(log), 'StandardErrorPath': str(log),
-    }))
-    run('launchctl', 'bootout', f'{domain}/{label}', capture=True, check=False)
-    try:
-        run('launchctl', 'bootstrap', domain, str(path))
-        while True:
-            status = run('launchctl', 'print', f'{domain}/{label}', capture=True).stdout
-            finished = re.search(r'^\tlast exit code = (?!\(never exited\))(.+)$', status, re.MULTILINE)
-            if finished:
-                break
-            time.sleep(1)
-    finally:
-        run('launchctl', 'bootout', f'{domain}/{label}', capture=True, check=False)
-        path.unlink(missing_ok=True)
-    sys.stdout.write(log.read_text())
-    if finished.group(1) != '0':
-        raise RuntimeError(f'{" ".join(args)} failed with exit code {finished.group(1)}; see {log}')
 
 
 def plist(runtime):

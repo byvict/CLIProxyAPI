@@ -1,11 +1,9 @@
 import importlib.util
 import io
 import json
-import os
 from pathlib import Path
 import plistlib
 import tempfile
-from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -109,33 +107,6 @@ class DeploymentTests(unittest.TestCase):
         self.assertEqual(config['WorkingDirectory'], str(Path.home()))
         self.assertEqual(config['Label'], app.LABEL)
         self.assertEqual(config['StandardErrorPath'], str(app.LOGS / 'launchd.stderr.log'))
-
-    def test_go_tests_run_as_launchd_job_and_fail_deploy_on_nonzero_exit(self):
-        with tempfile.TemporaryDirectory() as directory:
-            home = Path(directory)
-            jobs = []
-
-            def fake_run(*args, capture=False, check=True, cwd=app.REPO):
-                if args[1] == 'bootstrap':
-                    jobs.append(plistlib.loads(Path(args[3]).read_bytes()))
-                    (home / 'logs' / 'deploy-tests.log').write_text('FAIL\tpkg\n')
-                if args[1] == 'print':
-                    return SimpleNamespace(stdout='\tstate = not running\n\tlast exit code = 1\n')
-                return SimpleNamespace(stdout='')
-
-            with patch.object(app.Path, 'home', return_value=home), patch.object(app, 'LOGS', home / 'logs'), \
-                    patch.object(app, 'run', side_effect=fake_run), \
-                    patch.dict(os.environ, {'PATH': '/toolchain', 'SECRET_TOKEN': 'x'}), \
-                    patch('sys.stdout', new=io.StringIO()) as output:
-                with self.assertRaisesRegex(RuntimeError, 'exit code 1'):
-                    app.run_in_launchd('/toolchain/go', 'test', './...')
-            self.assertEqual(jobs[0]['ProgramArguments'], ['/toolchain/go', 'test', './...'])
-            self.assertEqual(jobs[0]['WorkingDirectory'], str(app.REPO))
-            self.assertFalse(jobs[0]['KeepAlive'])
-            self.assertEqual(jobs[0]['EnvironmentVariables']['PATH'], '/toolchain')
-            self.assertNotIn('SECRET_TOKEN', jobs[0]['EnvironmentVariables'])
-            self.assertIn('FAIL\tpkg', output.getvalue())
-            self.assertEqual(list((home / 'Library/LaunchAgents').iterdir()), [])
 
     def test_deploy_requires_clean_pushed_main(self):
         for responses, error in [(['topic'], 'requires main'), (['main', ' M file'], 'Commit all'),
