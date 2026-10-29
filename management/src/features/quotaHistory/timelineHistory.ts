@@ -1,4 +1,8 @@
-import { buildTimelineLane, pickLaneWindow } from '@/features/quota/quotaTimelineModel';
+import {
+  antigravityPoolOf,
+  buildTimelineLane,
+  pickLaneWindow,
+} from '@/features/quota/quotaTimelineModel';
 import type { TimelineLane, TimelineLaneInput } from '@/features/quota/quotaTimelineModel';
 import { normalizeAuthIndex } from '@/utils/authIndex';
 import type { QuotaObservation } from './projection';
@@ -17,7 +21,8 @@ export function historyTimelineLane(
     if (
       normalizeAuthIndex(sample.credential) !== credential ||
       sample.provider !== input.provider ||
-      sample.observedAtMs > now
+      sample.observedAtMs > now ||
+      (input.pool !== undefined && antigravityPoolOf(sample.windowId) !== input.pool)
     )
       continue;
     const previous = latest.get(sample.windowId);

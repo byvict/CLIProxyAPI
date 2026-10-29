@@ -16,7 +16,7 @@ claude.seven_day_sonnet.resets_at = future(2);
 claude.iguana_necktie.resets_at = future(8);
 delete claude.additional_credit_balance;
 claude.cedar_ember = { eligible: false, grants: [] };
-const antigravity = { groups: [{ displayName: 'Gemini Models', description: 'Models within this group: Gemini Flash, Gemini Pro', buckets: [{ bucketId: 'gemini-5h', displayName: '5-hour limit', window: '5h', remainingFraction: 1, resetTime: future(0.2) }, { bucketId: 'gemini-weekly', displayName: 'Weekly limit', window: 'weekly', remainingFraction: 1, resetTime: future(6) }] }] };
+const antigravity = { groups: [{ displayName: 'Gemini Models', description: 'Models within this group: Gemini Flash, Gemini Pro', buckets: [{ bucketId: 'gemini-5h', displayName: '5-hour limit', window: '5h', remainingFraction: 1, resetTime: future(0.2) }, { bucketId: 'gemini-weekly', displayName: 'Weekly limit', window: 'weekly', remainingFraction: 1, resetTime: future(6) }] }, { displayName: 'Claude and GPT Models', description: 'Models within this group: Claude Opus, Claude Sonnet, GPT-OSS', buckets: [{ bucketId: '3p-5h', displayName: '5-hour limit', window: '5h', remainingFraction: 0.96, resetTime: future(0.15) }, { bucketId: '3p-weekly', displayName: 'Weekly limit', window: 'weekly', remainingFraction: 0.98, resetTime: future(7) }] }] };
 const codex = { plan_type: 'pro', credits: { balance: '62500.0000000000', unlimited: false }, rate_limit: { allowed: true, secondary_window: { used_percent: 48, limit_window_seconds: 604800, reset_at: Math.floor((now + 5 * 86400000) / 1000) } } };
 const resets = { available_count: 2, credits: [1, 10].map((days, index) => ({ id: `fixture-${index}`, status: 'available', reset_type: 'codex_rate_limits', granted_at: new Date(now - 86400000).toISOString(), expires_at: future(days) })) };
 const grok = { currentPeriod: { type: 'USAGE_PERIOD_TYPE_WEEKLY', start: new Date(now - 86400000).toISOString(), end: future(6) }, billingPeriodEnd: future(6), creditUsagePercent: 6, monthlyLimit: { val: 0 }, used: { val: 0 }, onDemandCap: { val: 0 }, productUsage: [{ product: 'GrokBot', usagePercent: 5 }, { product: 'GrokBuild', usagePercent: 1 }] };
@@ -110,6 +110,10 @@ try {
     const windowMetrics = [];
     for (const mode of ['Weekly', '5-hour']) {
       await timeline.getByRole('button', {name: mode, exact: true}).click();
+      const laneNames = await timeline.locator('[class*="laneName"]').allInnerTexts();
+      const agyLane = laneNames.indexOf('Antigravity (100%)');
+      assert(agyLane >= 0, `${mode} must keep the Antigravity Gemini lane`);
+      assert.equal(laneNames[agyLane + 1], 'Other (98%)', `${mode} must draw the Antigravity Claude & GPT pool right below Antigravity`);
       const windows = await timeline.locator('[class*="_window_"]').evaluateAll((nodes) => nodes.map((bar) => ({
         text: bar.innerText.trim(), title: bar.title, width: bar.getBoundingClientRect().width,
         fill: bar.querySelector('[class*="_windowFill_"]')?.style.width ?? null,

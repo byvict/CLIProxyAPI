@@ -67,8 +67,10 @@ so upstream automatic updates do not replace the fork.
 
 The committed patch includes the compact summaries for all five native providers,
 the shared dashed current-time line, provider logos and weekly balances, and the
-Codex reset-credit triangles. Build from these committed inputs. A previously
-installed HTML file can contain local changes that were never added to the patch.
+Codex reset-credit triangles. Antigravity bills Gemini and Claude & GPT models from
+separate pools, so the timeline draws the Claude & GPT pool (`3p-*` buckets) as an
+**Other** lane directly below the Antigravity lane. Build from these committed inputs.
+A previously installed HTML file can contain local changes that were never added to the patch.
 
 Check the summary cards in the built artifact with synthetic provider responses:
 
@@ -78,7 +80,8 @@ PLAYWRIGHT_MODULE=/absolute/playwright/index.mjs node scripts/compact-quota-ui-c
 ```
 
 This checker intercepts every browser request and loads the build's `dist/index.html`.
-It checks all five cards on desktop and mobile without using live credentials.
+It checks all five cards and both Antigravity pool lanes on desktop and mobile
+without using live credentials.
 The compact-card unit tests also run in every `scripts/build-management.sh` build.
 
 Build and run the proxy from this branch to provide the authenticated
