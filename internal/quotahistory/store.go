@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 
@@ -34,7 +35,8 @@ func open(path string) (*sql.DB, error) {
 	if err = f.Close(); err != nil {
 		return nil, err
 	}
-	db, err := sql.Open("sqlite", path)
+	dsn := (&url.URL{Scheme: "file", Path: filepath.ToSlash(path), RawQuery: "_txlock=immediate"}).String()
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err
 	}

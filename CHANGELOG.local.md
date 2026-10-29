@@ -1,5 +1,9 @@
 # Local releases
 
+## 8.0.44-local.24
+
+- Start quota history write transactions in SQLite immediate mode so concurrent account collection does not fail while upgrading a read transaction to a writer.
+
 ## 8.0.44-local.23
 
 - Keep quota history attached to the provider and relative credential path when the installation moves. Preserve current management identifiers in API responses.
