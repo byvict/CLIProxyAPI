@@ -1,7 +1,9 @@
 """Observational dispatch and panel metrics from audited judgments."""
 
 import collections
+import statistics
 
+from extract import tier0
 from storage import VERSION, latest
 
 
@@ -49,6 +51,49 @@ def panel_metric(panel, contributions):
         "baseline_pair": panel.get("predefined_baseline_pair"),
         "baseline_comparison": None,
     }
+
+
+def token_total(records, key):
+    known = [r[key] for r in records if r[key] is not None]
+    return sum(known) if known else None
+
+
+def tier0_seats(work, records):
+    grouped = collections.defaultdict(list)
+    for d in work:
+        record = records[d["dispatch_id"]]
+        key = tuple(
+            "unknown" if record[field] is None else str(record[field])
+            for field in ("provider", "model", "effort")
+        )
+        grouped[key].append(record)
+    rows = []
+    for (provider, model, effort), group in sorted(grouped.items()):
+        latencies = [r["latency_ms"] for r in group if r["latency_ms"] is not None]
+        rows.append(
+            {
+                "provider": provider,
+                "model": model,
+                "effort": effort,
+                "dispatched": len(group),
+                "completed": sum(r["status"] == "completed" for r in group),
+                "interrupted": sum(r["interrupted"] for r in group),
+                "failed": sum(r["failed"] for r in group),
+                "replaced": sum(r["replaced_by"] is not None for r in group),
+                "retried": sum(r["retried_by"] is not None for r in group),
+                "with_own_tokens": sum(
+                    r["own_input_tokens"] is not None
+                    or r["own_output_tokens"] is not None
+                    for r in group
+                ),
+                "own_input_tokens": token_total(group, "own_input_tokens"),
+                "own_output_tokens": token_total(group, "own_output_tokens"),
+                "median_latency_ms": (
+                    statistics.median(latencies) if latencies else None
+                ),
+            }
+        )
+    return rows
 
 
 def summarize(dispatches, contributions, panels, coverage):
@@ -140,6 +185,7 @@ def summarize(dispatches, contributions, panels, coverage):
         ]
 
     metrics = [panel_metric(p, cs) for p in ps]
+    records = tier0(ds)
     complete = [p for p in metrics if p["complete"]]
     counts = dict(collections.Counter(c["disposition"] for c in cs))
     applied = sum(c.get("applied") is True for c in cs)
@@ -187,6 +233,7 @@ def summarize(dispatches, contributions, panels, coverage):
         "immediate_dispatcher_family_x_child_family": groups(["dispatcher", "child"]),
         "by_role_and_child_family": groups(["role", "child"]),
         "by_role_round_root_child": groups(["role", "round", "root", "child"]),
+        "tier0_by_child_seat": tier0_seats(work, records),
         "panel_metrics": metrics,
         "panel_totals": {
             "complete": len(complete),

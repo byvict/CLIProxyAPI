@@ -11,7 +11,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from export import public_envelope, validate_publication
+from export import has_tier0, public_envelope, validate_publication, without_tier0
 from extract import extract
 from storage import (
     VERSION,
@@ -655,7 +655,8 @@ def publish(root, args):
 def validate(root, args):
     publication = selected_publication(root, args.generation)
     envelope = validate_publication(root, publication)
-    if envelope != build(root):
+    current = build(root)
+    if envelope != (current if has_tier0(envelope) else without_tier0(current)):
         raise ValueError(
             "Selected generation is valid but not current; aggregate the latest preserved inputs"
         )

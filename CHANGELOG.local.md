@@ -1,5 +1,10 @@
 # Local releases
 
+## 8.0.44-local.19
+
+- Export a flat `tier0` record per delegation dispatch with status, interruption, failure, mechanical replacement and retry links, latency, own tokens, provider, model, family, effort and dispatcher and root families, plus a per-seat summary. Existing export fields are unchanged, and generations exported before this release still validate and publish.
+- Add `scripts/delegation-observatory/inventory.py`, which writes a heuristic multi-family round inventory, a comparison of the pstack model sheet with historical seats and an estimate of quota points per window from a validated export.
+
 ## 8.0.44-local.18
 
 - Serve the Performance page from a report kept in memory. The proxy checks its sources every minute and recomputes only when T3's database, the imported history or the São Paulo date changed, so page opens no longer wait 2 to 5 seconds and aborted requests no longer discard the work. The first open after a restart waits for one computation, and a failed computation is retried a minute later.

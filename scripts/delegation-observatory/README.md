@@ -63,6 +63,22 @@ Attach these steps to the existing T3 routine at **09:00 America/Sao_Paulo**. Sc
 
 The envelope keeps `schema_version: "t3-observatory/1.0"`, original dispatch/contribution/panel metrics, exact `window`, source/disposition timestamps, sanitized `source_snapshot`, historical `source_snapshots` and `disposition_snapshots`, and sanitized evidence. `attribution_coverage` exports **every inspected dispatch**, including no-finding reports, with `dispatch_id`, `revision`, `evaluable`, `evidence_ids`, disposition time and optional role/panel. Its `application_not_applicable` and `application_unknown` booleans reproduce the original dispatch-rate exclusions. Verification-artifact-only contributions are application-not-applicable; accepted corrective contributions without inspected application remain unknown. Remaining audited no-accepted dispatches stay in the defined rate denominators. Filtered consumers must join coverage by dispatch ID and retain these exclusions. Contribution counts are separate from dispatch rates. Unknown usage remains null; no cost or causal family ranking is inferred.
 
+Each exported dispatch also carries a flat `tier0` record recomputed from its published fields: `status`, `interrupted`, `failed`, `replacement_of`/`replaced_by`, `retry_of`/`retried_by`, `latency_ms`, the five own-token counters, child `provider`, `model`, `family` and normalized `effort`, `dispatcher_family` and `root_family`. A retry is a later attempt on the same task, other than a continuation, after a non-completed attempt; a continuation carries a new request and is never a retry. A replacement is a new task from the same dispatcher that starts after a non-completed dispatch ended, within `extract.REPLACEMENT_WINDOW` of its start, whose request name keeps the earlier one apart from member tokens, at most one attempt-like token change and at most one inserted token. Its first member token must match unless the earlier name has none or the later name carries a `retry`, `replacement` or `fallback` marker. The candidate with the fewest name edits wins, and a renamed attempt counts only when no sibling shares its new name. Validation refuses a `tier0` record that does not reproduce. `summary.tier0_by_child_seat` aggregates these records by child provider, model and effort. A generation carries `tier0` exactly when its summary has `tier0_by_child_seat`: generations aggregated before `tier0` existed have neither, still validate and publish, and `validate` compares them with the current build without its tier-0 additions.
+
+## Tier-0 round inventory
+
+`inventory.py` reads a validated `dashboard.json`, the pstack model sheet and the proxy's quota history (`mode=ro`; credentials are only ranked, never selected) and writes `round-inventory.json`, `seat-coverage.json` and `quota-estimate.json`. It writes nothing into the data or publication directories unless pointed there; keep its output in a run directory.
+
+```sh
+python3 scripts/delegation-observatory/inventory.py \
+  --dashboard "$ISOLATED_DATA_DIR/export/<generation>/dashboard.json" \
+  --model-sheet ~/.config/t3-pstack/models.md \
+  --quota-history "$HOME/Dev/CLIProxyAPI/app/quota-history.sqlite" \
+  --out-dir "$RUN_DIR/tier0"
+```
+
+The round inventory is heuristic and records its method; it checks every complete panel of the generation and gives a mechanical reason for each one that is not an exact round. Its three- and four-family buckets count only families with at least one completed member. The quota estimate is marked `estimate` and is an upper bound for dispatch cost, because root threads and work outside T3 share the quota without dispatch tokens.
+
 ## Verification
 
 Fixtures use small SQLite metadata projections, never simulated agent jobs. Keep test scratch on the mounted SSD:
