@@ -1,5 +1,14 @@
 # Local releases
 
+## 8.0.44-local.17
+
+- Run the performance history importer from the active release at load and every 15 minutes as the LaunchAgent `com.byvict.cliproxyapi.performance-import`, with its receipt and error log in `~/Library/Logs/CLIProxyAPI/`. `stop`, `uninstall` and `status` cover both jobs.
+- Keep the history in SQLite WAL mode so page reads continue during an import, and replace the per-run backup with one dated backup per São Paulo day, keeping the newest three.
+- Read imported executions and token events in one read transaction.
+- Ship the importer as a checksummed release artifact, keep older releases valid for rollback, and run its tests before each deploy.
+- Skip a T3 database that cannot be read or parsed, list it in the receipt's `skippedSources`, and still import the other sources. An error writing the history still fails the run without changes.
+- Wait up to 5 seconds for a T3 or history database that another process holds locked instead of failing the page read.
+
 ## 8.0.44-local.16
 
 - Run the service from `~/Dev/CLIProxyAPI/app` and build releases in `~/Dev/CLIProxyAPI/build`.

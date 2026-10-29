@@ -19,6 +19,8 @@ import urllib.request
 
 REPO = Path(__file__).resolve().parent.parent
 LABEL = 'com.byvict.cliproxyapi'
+IMPORT_LABEL = LABEL + '.performance-import'
+ARTIFACTS = ('cli-proxy-api', 'management.html', 'import-performance-history.py')
 RUNTIME = Path.home() / 'Dev/CLIProxyAPI/app'
 BUILD_ROOT = Path.home() / 'Dev/CLIProxyAPI/build'
 
@@ -61,8 +63,9 @@ def digest(path):
 
 def check_release(release):
     info = json.loads((release / 'release.json').read_text())
-    for name in ('cli-proxy-api', 'management.html'):
-        if digest(release / name) != info['sha256'][name]:
+    # Releases built before the importer became an artifact record only their own files.
+    for name, expected in info['sha256'].items():
+        if digest(release / name) != expected:
             raise RuntimeError(f'Release checksum mismatch: {name}')
     return info
 
@@ -73,7 +76,7 @@ def build_release(runtime, build_root, info):
         previous = check_release(current.resolve())
         if previous['version'] == info['version'] and previous['commit'] != info['commit']:
             raise RuntimeError('Bump VERSION and update CHANGELOG.local.md before a new release.')
-    run('python3', '-B', '-m', 'unittest', 'discover', '-s', 'scripts', '-p', 'test_macos_*.py')
+    run('python3', '-B', '-m', 'unittest', 'discover', '-s', 'scripts', '-p', 'test_*.py')
     run('go', 'test', './...')
     unformatted = run('gofmt', '-l', 'internal/api/server_routes.go',
                       'internal/api/server_test.go', 'cmd/macos-launcher/main.go', capture=True).stdout.strip()
@@ -94,8 +97,8 @@ def build_release(runtime, build_root, info):
                          [('Version', 'version'), ('Commit', 'commit'), ('BuildDate', 'build_date')])
         run('go', 'build', '-ldflags', flags, '-o', str(stage / 'cli-proxy-api'), './cmd/server')
         run('bash', 'scripts/build-management.sh', str(build_root), str(stage / 'management.html'))
-        info['sha256'] = {name: digest(stage / name) for name in
-                          ('cli-proxy-api', 'management.html')}
+        shutil.copy2(REPO / 'scripts/import-performance-history.py', stage)
+        info['sha256'] = {name: digest(stage / name) for name in ARTIFACTS}
         (stage / 'release.json').write_text(json.dumps(info, indent=2) + '\n')
         stage.rename(destination)
     finally:
@@ -119,6 +122,23 @@ def plist(runtime):
         'ProcessType': 'Background', 'ThrottleInterval': 10, 'ExitTimeOut': 30,
         'StandardOutPath': str(LOGS / 'launchd.stdout.log'),
         'StandardErrorPath': str(LOGS / 'launchd.stderr.log'),
+    })
+
+
+def import_plist(runtime):
+    # The job targets current, so deploy and rollback switch the importer without
+    # a plist change. launchd never starts a job that is still running.
+    return plistlib.dumps({
+        'Label': IMPORT_LABEL,
+        'ProgramArguments': ['/usr/bin/python3', '-B', str(runtime / 'current/import-performance-history.py'),
+                             '--destination', str(runtime / 'performance-history.sqlite'),
+                             '--receipt', str(LOGS / 'performance-import.json')],
+        'EnvironmentVariables': {'PATH': '/opt/homebrew/bin:/usr/bin:/bin'},
+        'WorkingDirectory': str(Path.home()),
+        'RunAtLoad': True, 'StartInterval': 900,
+        'ProcessType': 'Background', 'LowPriorityIO': True,
+        'StandardOutPath': '/dev/null',
+        'StandardErrorPath': str(LOGS / 'performance-import.stderr.log'),
     })
 
 
@@ -150,23 +170,27 @@ def check_access(runtime):
         path.unlink(missing_ok=True)
 
 
+def install_agent(label, content):
+    """Write the plist and (re)load the job. Return False when it already runs this plist."""
+    domain = f'gui/{os.getuid()}'
+    path = Path.home() / 'Library/LaunchAgents' / (label + '.plist')
+    path.parent.mkdir(parents=True, exist_ok=True)
+    loaded = run('launchctl', 'print', f'{domain}/{label}', capture=True, check=False).returncode == 0
+    if loaded and path.exists() and path.read_bytes() == content:
+        return False
+    path.write_bytes(content)
+    run('plutil', '-lint', str(path))
+    run('launchctl', 'bootout', f'{domain}/{label}', capture=True, check=False)
+    run('launchctl', 'bootstrap', domain, str(path))
+    return True
+
+
 def restart(runtime):
     if not LAUNCHER.is_file():
         raise RuntimeError('Install the launcher with scripts/install-macos-launcher.sh first.')
-    domain = f'gui/{os.getuid()}'
-    agents_dir = Path.home() / 'Library/LaunchAgents'
-    agents_dir.mkdir(parents=True, exist_ok=True)
     LOGS.mkdir(parents=True, mode=0o700, exist_ok=True)
-    path = agents_dir / (LABEL + '.plist')
-    content = plist(runtime)
-    loaded = run('launchctl', 'print', f'{domain}/{LABEL}', capture=True, check=False).returncode == 0
-    if loaded and path.exists() and path.read_bytes() == content:
-        run('launchctl', 'kickstart', '-k', f'{domain}/{LABEL}')
-    else:
-        path.write_bytes(content)
-        run('plutil', '-lint', str(path))
-        run('launchctl', 'bootout', f'{domain}/{LABEL}', capture=True, check=False)
-        run('launchctl', 'bootstrap', domain, str(path))
+    if not install_agent(LABEL, plist(runtime)):
+        run('launchctl', 'kickstart', '-k', f'gui/{os.getuid()}/{LABEL}')
 
 
 def health():
@@ -234,6 +258,7 @@ def activate(runtime, release):
     if previous is not None and previous != release:
         atomic_link(runtime / 'previous', previous)
     write_shortcuts(runtime)
+    install_agent(IMPORT_LABEL, import_plist(runtime))
     print(json.dumps({'release': str(release), 'health': reading}, indent=2))
 
 
@@ -256,10 +281,11 @@ def main():
     runtime = args.runtime.resolve()
     validate_runtime(runtime)
     if args.command == 'status':
-        result = run('launchctl', 'print', f'gui/{os.getuid()}/{LABEL}', capture=True)
-        print(LABEL)
-        print('\n'.join(line.strip() for line in result.stdout.splitlines()
-                        if line.strip().startswith(('state =', 'pid =', 'last exit code ='))))
+        for label in (LABEL, IMPORT_LABEL):
+            result = run('launchctl', 'print', f'gui/{os.getuid()}/{label}', capture=True, check=False)
+            print(label)
+            print('\n'.join(line.strip() for line in result.stdout.splitlines()
+                            if line.strip().startswith(('state =', 'pid =', 'last exit code ='))) or 'not loaded')
         print(json.dumps(health()))
         return
     with (runtime / '.deploy.lock').open('a') as lock:
@@ -293,9 +319,10 @@ def main():
         elif args.command == 'start':
             activate(runtime, (runtime / 'current').resolve())
         else:
-            run('launchctl', 'bootout', f'gui/{os.getuid()}/{LABEL}', capture=True, check=False)
-            if args.command == 'uninstall':
-                (Path.home() / 'Library/LaunchAgents' / (LABEL + '.plist')).unlink(missing_ok=True)
+            for label in (LABEL, IMPORT_LABEL):
+                run('launchctl', 'bootout', f'gui/{os.getuid()}/{label}', capture=True, check=False)
+                if args.command == 'uninstall':
+                    (Path.home() / 'Library/LaunchAgents' / (label + '.plist')).unlink(missing_ok=True)
             print('Service stopped. Runtime data and releases are preserved.')
 
 

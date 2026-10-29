@@ -1,10 +1,15 @@
 """Behavior checks for recovered history using synthetic source files only."""
+import argparse
+import contextlib
+import datetime as dt
 import importlib.util
+import io
 import json
 import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 spec = importlib.util.spec_from_file_location("history", Path(__file__).with_name("import-performance-history.py"))
 history = importlib.util.module_from_spec(spec)
@@ -84,6 +89,150 @@ class HistoryTests(unittest.TestCase):
         self.importer.transcript(self.file("session.jsonl", "\n".join(map(json.dumps, records))), "muse")
         self.assertEqual(self.db.execute("SELECT count(*),sum(input_tokens+output_tokens) FROM usage_events").fetchone(), (1, 120))
         self.assertEqual(self.db.execute("SELECT count(*),completed_ms-started_ms FROM executions").fetchone(), (1, 2000))
+
+
+class RunTests(unittest.TestCase):
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.root = Path(temp.name).resolve()
+        self.home = self.root / "home"
+        self.destination = self.root / "runtime" / "performance-history.sqlite"
+
+    def transcript(self, name):
+        record = {"type": "assistant", "timestamp": "2026-10-28T12:00:00Z", "sessionId": name, "requestId": name,
+                  "message": {"id": name, "model": "claude", "usage": {"input_tokens": 10, "output_tokens": 5}}}
+        path = self.home / ".claude/projects/p" / (name + ".jsonl")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(record) + "\n")
+
+    def run_import(self):
+        receipt = self.root / "receipt.json"
+        args = argparse.Namespace(home=self.home, destination=self.destination, receipt=receipt,
+                                  dry_run=False, cache_only=False)
+        with contextlib.redirect_stdout(io.StringIO()):
+            history.run(args)
+        return json.loads(receipt.read_text())
+
+    def t3_database(self, *payloads):
+        path = self.home / ".t3/userdata/statev2.sqlite"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with contextlib.closing(sqlite3.connect(path)) as db, db:
+            db.executescript("""CREATE TABLE orchestration_v2_projection_provider_threads
+                    (provider_thread_id, thread_id, provider, payload_json);
+                CREATE TABLE orchestration_v2_projection_provider_turns
+                    (provider_thread_id, thread_id, started_at, completed_at, payload_json, provider_turn_id);
+                INSERT INTO orchestration_v2_projection_provider_threads VALUES ('p', 't', 'claudeAgent', '{}');""")
+            db.executemany("""INSERT INTO orchestration_v2_projection_provider_turns
+                VALUES ('p', 't', '2026-10-28T12:00:00Z', '2026-10-28T12:01:00Z', ?, ?)""",
+                           [(payload, f"turn{index}") for index, payload in enumerate(payloads)])
+        return path
+
+    def rows(self, path=None):
+        with contextlib.closing(sqlite3.connect(path or self.destination)) as db:
+            return (db.execute("SELECT count(*) FROM usage_events").fetchone()[0],
+                    db.execute("SELECT count(*) FROM executions").fetchone()[0],
+                    db.execute("SELECT * FROM imports ORDER BY source").fetchall())
+
+    def test_import_leaves_history_in_wal_mode(self):
+        self.run_import()
+        with contextlib.closing(sqlite3.connect(self.destination)) as db:
+            self.assertEqual(db.execute("PRAGMA journal_mode").fetchone()[0], "wal")
+
+    def test_readers_see_committed_rows_while_an_import_holds_the_write_lock(self):
+        self.transcript("a")
+        self.run_import()
+        writer = sqlite3.connect(self.destination, isolation_level=None)
+        self.addCleanup(writer.close)
+        writer.execute("BEGIN EXCLUSIVE")
+        writer.execute("INSERT INTO usage_events VALUES ('uncommitted','claude','s',0,1,1,'test')")
+        reader = sqlite3.connect(self.destination.as_uri() + "?mode=ro", uri=True, timeout=0)
+        self.addCleanup(reader.close)
+        self.assertEqual(reader.execute("SELECT count(*) FROM usage_events").fetchone()[0], 1)
+
+    def test_daily_backup_keeps_the_state_before_the_first_import_and_three_dated_copies(self):
+        self.transcript("a")
+        self.assertIsNone(self.run_import()["backup"])
+        parent = self.destination.parent
+        historical = parent / "performance-history.before-20261027202000.sqlite"
+        historical.write_text("historical")
+        for day in ("20260101", "20260102", "20260103", "20260104"):
+            (parent / f"performance-history.before-{day}.sqlite").write_text(day)
+        today = parent / dt.datetime.now(ZoneInfo("America/Sao_Paulo")).strftime("performance-history.before-%Y%m%d.sqlite")
+        self.transcript("b")
+        self.assertEqual(self.run_import()["backup"], str(today))
+        self.assertEqual(self.run_import()["backup"], str(today))
+        self.assertEqual(sorted(path.name for path in parent.glob("performance-history.before-*")),
+                         sorted([historical.name, "performance-history.before-20260103.sqlite",
+                                 "performance-history.before-20260104.sqlite", today.name]))
+        self.assertEqual(historical.read_text(), "historical")
+        self.assertEqual(self.rows(today)[0], 1)
+        self.assertEqual(self.rows()[0], 2)
+
+    def test_failed_import_leaves_history_unchanged(self):
+        self.transcript("a")
+        self.run_import()
+        before = self.rows()
+        self.transcript("b")
+        corrupt = self.home / ".codex/sessions/rollout.jsonl.zst"
+        corrupt.parent.mkdir(parents=True)
+        corrupt.write_bytes(b"not zstd")
+        with self.assertRaisesRegex(RuntimeError, "Could not decompress"):
+            self.run_import()
+        self.assertEqual(self.rows(), before)
+
+    def test_unreadable_t3_databases_are_skipped_and_the_import_completes(self):
+        self.transcript("a")
+        locked = self.home / ".t3/userdata/statev2.sqlite"
+        corrupt = self.home / ".t3/backup-userdata/state.sqlite"
+        for path in (locked, corrupt):
+            path.parent.mkdir(parents=True)
+        locked.touch(mode=0)
+        corrupt.write_bytes(b"not a database" * 512)
+        with contextlib.redirect_stderr(io.StringIO()) as stderr:
+            receipt = self.run_import()
+        self.assertEqual(self.rows()[0], 1)
+        self.assertEqual(receipt["skippedSources"], [
+            {"source": str(corrupt), "error": "file is not a database"},
+            {"source": str(locked), "error": "unable to open database file"}])
+        self.assertIn(str(locked), stderr.getvalue())
+
+    def test_t3_database_failing_mid_read_is_skipped_without_partial_rows(self):
+        state = self.t3_database("{}", "{}", "{broken")
+        with contextlib.redirect_stderr(io.StringIO()):
+            receipt = self.run_import()
+        self.assertEqual(receipt["skippedSources"], [{"source": str(state), "error": "malformed JSON"}])
+        self.assertEqual(self.rows()[1], 0)
+
+    def test_t3_rows_that_fail_to_parse_skip_the_source_without_partial_rows(self):
+        self.transcript("a")
+        state = self.home / ".t3/userdata/state.sqlite"
+        state.parent.mkdir(parents=True, exist_ok=True)
+        with contextlib.closing(sqlite3.connect(state)) as db, db:
+            db.executescript("""CREATE TABLE projection_turns (thread_id, turn_id, row_id, started_at, completed_at);
+                CREATE TABLE projection_thread_sessions (thread_id, provider_name);
+                CREATE TABLE provider_session_runtime (thread_id, resume_cursor_json);
+                INSERT INTO projection_thread_sessions VALUES ('a', 'claude'), ('b', 'claude'), ('c', 'claude');
+                INSERT INTO projection_turns VALUES ('a', 't', 1, '2026-10-28T12:00:00Z', NULL),
+                    ('b', 't', 2, '2026-10-28T12:00:00Z', NULL), ('c', 't', 3, '2026-10-28T12:00:00Z', NULL);
+                INSERT INTO provider_session_runtime VALUES ('a', '{"sessionId": "a"}'),
+                    ('b', '{"sessionId": "b"}'), ('c', '{broken');""")
+        with contextlib.redirect_stderr(io.StringIO()):
+            receipt = self.run_import()
+        self.assertEqual([skip["source"] for skip in receipt["skippedSources"]], [str(state)])
+        self.assertEqual(self.rows()[:2], (1, 0))
+
+    def test_a_locked_history_fails_the_run_instead_of_skipping_t3(self):
+        self.t3_database("{}")
+        self.run_import()
+        self.assertEqual(self.rows()[1], 1)
+        writer = sqlite3.connect(self.destination, isolation_level=None)
+        self.addCleanup(writer.close)
+        writer.execute("BEGIN IMMEDIATE")
+        with contextlib.redirect_stderr(io.StringIO()) as stderr, \
+                self.assertRaisesRegex(sqlite3.OperationalError, "database is locked"):
+            self.run_import()
+        self.assertNotIn("Skipped", stderr.getvalue())
 
 
 class CodexBarTests(unittest.TestCase):

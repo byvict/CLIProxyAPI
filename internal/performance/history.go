@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"net/url"
 	"os"
 	"sort"
 	"strings"
@@ -52,10 +51,20 @@ func ReadActivity(ctx context.Context, t3Path, historyPath string, now time.Time
 	} else if errStat != nil {
 		return Report{}, errStat
 	}
-	u := url.URL{Scheme: "file", Path: historyPath, RawQuery: "mode=ro"}
-	db, err := sql.Open("sqlite", u.String())
+	turns, events, err := readHistory(ctx, historyPath, turns)
 	if err != nil {
 		return Report{}, err
+	}
+	return aggregateActivity(turns, events, now, true)
+}
+
+// readHistory reads both tables in one read transaction, so an import committed
+// between the two queries cannot mix generations. It returns before aggregation
+// so the transaction does not outlive the reads.
+func readHistory(ctx context.Context, path string, turns []execution) ([]execution, []usageEvent, error) {
+	db, err := sql.Open("sqlite", readOnlyDSN(path))
+	if err != nil {
+		return nil, nil, err
 	}
 	defer func() {
 		if errClose := db.Close(); errClose != nil {
@@ -63,10 +72,19 @@ func ReadActivity(ctx context.Context, t3Path, historyPath string, now time.Time
 		}
 	}()
 	db.SetMaxOpenConns(1)
-	rows, err := db.QueryContext(ctx, `SELECT id,provider,session_id,started_ms,
+	tx, err := db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return nil, nil, fmt.Errorf("read imported history: %w", err)
+	}
+	defer func() {
+		if errRollback := tx.Rollback(); errRollback != nil {
+			log.WithError(errRollback).Debug("end imported history read")
+		}
+	}()
+	rows, err := tx.QueryContext(ctx, `SELECT id,provider,session_id,started_ms,
 		COALESCE(completed_ms,0),input_tokens+output_tokens,partial,source FROM executions ORDER BY started_ms`)
 	if err != nil {
-		return Report{}, fmt.Errorf("read imported executions: %w", err)
+		return nil, nil, fmt.Errorf("read imported executions: %w", err)
 	}
 	seen := map[string]bool{}
 	for _, turn := range turns {
@@ -76,7 +94,7 @@ func ReadActivity(ctx context.Context, t3Path, historyPath string, now time.Time
 		var turn execution
 		if errScan := rows.Scan(&turn.ID, &turn.Provider, &turn.Session, &turn.Start, &turn.End, &turn.Tokens, &turn.Partial, &turn.Source); errScan != nil {
 			_ = rows.Close()
-			return Report{}, errScan
+			return nil, nil, errScan
 		}
 		if !seen[turn.ID] {
 			turns = append(turns, turn)
@@ -86,11 +104,11 @@ func ReadActivity(ctx context.Context, t3Path, historyPath string, now time.Time
 	errRows := rows.Err()
 	_ = rows.Close()
 	if errRows != nil {
-		return Report{}, errRows
+		return nil, nil, errRows
 	}
-	rows, err = db.QueryContext(ctx, `SELECT provider,session_id,at_ms,input_tokens+output_tokens FROM usage_events`)
+	rows, err = tx.QueryContext(ctx, `SELECT provider,session_id,at_ms,input_tokens+output_tokens FROM usage_events`)
 	if err != nil {
-		return Report{}, fmt.Errorf("read imported token events: %w", err)
+		return nil, nil, fmt.Errorf("read imported token events: %w", err)
 	}
 	defer func() {
 		if errClose := rows.Close(); errClose != nil {
@@ -101,14 +119,14 @@ func ReadActivity(ctx context.Context, t3Path, historyPath string, now time.Time
 	for rows.Next() {
 		var event usageEvent
 		if errScan := rows.Scan(&event.Provider, &event.Session, &event.At, &event.Tokens); errScan != nil {
-			return Report{}, errScan
+			return nil, nil, errScan
 		}
 		events = append(events, event)
 	}
 	if errRows = rows.Err(); errRows != nil {
-		return Report{}, errRows
+		return nil, nil, errRows
 	}
-	return aggregateActivity(turns, events, now, true)
+	return turns, events, nil
 }
 
 func aggregateActivity(turns []execution, events []usageEvent, now time.Time, imported bool) (Report, error) {

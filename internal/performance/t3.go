@@ -55,12 +55,18 @@ func ReadT3(ctx context.Context, path string, now time.Time) (Report, error) {
 	return aggregateActivity(turns, nil, now, false)
 }
 
+// readOnlyDSN waits out the locks a writer holds while it opens or closes a WAL
+// database instead of failing the read.
+func readOnlyDSN(path string) string {
+	u := url.URL{Scheme: "file", Path: path, RawQuery: "mode=ro&_pragma=busy_timeout(5000)"}
+	return u.String()
+}
+
 func readT3Turns(ctx context.Context, path string) ([]execution, error) {
 	if _, err := os.Stat(path); err != nil {
 		return nil, err
 	}
-	u := url.URL{Scheme: "file", Path: path, RawQuery: "mode=ro"}
-	db, err := sql.Open("sqlite", u.String())
+	db, err := sql.Open("sqlite", readOnlyDSN(path))
 	if err != nil {
 		return nil, err
 	}
