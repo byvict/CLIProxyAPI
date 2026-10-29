@@ -155,6 +155,10 @@ def rounds(dispatches):
 
 def round_record(members, coverage, panels):
     families = sorted({m["tier0"]["family"] for m in members} - {"unknown"})
+    completed = sorted(
+        {m["tier0"]["family"] for m in members if m["status"] == "completed"}
+        - {"unknown"}
+    )
     inspected = [m for m in members if m["dispatch_id"] in coverage]
     roles = {
         "design" if m["role"] == "design" else "review"
@@ -171,6 +175,8 @@ def round_record(members, coverage, panels):
         "roster_size": len(members),
         "families": families,
         "family_count": len(families),
+        "completed_families": completed,
+        "completed_family_count": len(completed),
         "unknown_family_members": sum(
             m["tier0"]["family"] == "unknown" for m in members
         ),
@@ -206,7 +212,7 @@ def family_table(records):
     table = {}
     for r in records:
         row = table.setdefault(
-            str(r["family_count"]),
+            str(r["completed_family_count"]),
             dict.fromkeys(
                 (
                     "rounds",
@@ -311,7 +317,9 @@ def round_inventory(envelope):
             f"by one token, it starts within {ROUND_GAP} before or {SIBLING_WINDOW} after the round, "
             "and no completed member has its family. Native dispatches join a round of the same "
             f"dispatcher run started within {NATIVE_GAP}. Rounds with at least one review or design "
-            "member are kept. Families exclude unknown. Durations are hours:minutes:seconds."
+            "member are kept. Families exclude unknown. family_count counts every roster family; "
+            "completed_family_count counts the families with at least one completed member and keys "
+            "by_completed_family_count, three_family and four_family. Durations are hours:minutes:seconds."
         ),
         "coverage_states": {
             "covered": "every member has an attribution coverage row",
@@ -320,7 +328,7 @@ def round_inventory(envelope):
         },
         "summary": {
             "rounds": len(records),
-            "by_family_count": table,
+            "by_completed_family_count": table,
             "three_family": table.get("3"),
             "four_family": table.get("4"),
             "known_complete_panels": panels_found["matches"],
@@ -387,7 +395,7 @@ def seat_coverage(envelope, sheet, inventory):
     multi_family = {
         m["dispatch_id"]
         for r in inventory["rounds"]
-        if r["family_count"] >= 3
+        if r["completed_family_count"] >= 3
         for m in r["members"]
     }
     seats = parse_sheet(sheet)
@@ -465,7 +473,7 @@ def observations(path):
         return connection.execute(
             "SELECT dense_rank() OVER (ORDER BY credential), provider, window_id, label, "
             "observed_at_ms, remaining, reset_at_ms, period_hours FROM observations "
-            "WHERE remaining IS NOT NULL AND period_hours IS NOT NULL ORDER BY observed_at_ms"
+            "ORDER BY observed_at_ms"
         ).fetchall()
 
 
@@ -503,19 +511,26 @@ def observed_hours(rows, first, last):
     series = collections.defaultdict(list)
     for row in rows:
         series[(row[0], row[1], row[2], row[3])].append(row)
-    observed = collections.defaultdict(lambda: [0.0, 0.0, None])
+    observed = collections.defaultdict(lambda: [0.0, 0.0, None, []])
     for ident, points in series.items():
-        key = window_key(ident[1], ident[2], points[0][7])
         for before, after in zip(points, points[1:]):
             begin, end = moment(before[4]), moment(after[4])
-            if end - begin > QUOTA_GAP or after[5] > before[5] or end <= begin:
+            if (
+                None in (before[5], after[5], before[7])
+                or end - begin > QUOTA_GAP
+                or after[5] > before[5]
+                or end <= begin
+                or (before[6] is not None and before[6] <= after[4])
+            ):
                 continue
+            key = window_key(ident[1], ident[2], before[7])
             for bucket, share in hours(begin, end).items():
                 if first <= bucket < last:
                     slot = observed[(key, bucket, ident)]
                     slot[0] += share * (end - begin).total_seconds()
                     slot[1] += share * (before[5] - after[5])
                     slot[2] = after[6] and moment(after[6])
+                    slot[3].append((max(begin, bucket), min(end, bucket + HOUR)))
     chosen = {}
     for (key, bucket, _), slot in sorted(
         observed.items(), key=lambda item: str(item[0])
@@ -527,22 +542,32 @@ def observed_hours(rows, first, last):
             "coverage": min(1.0, seconds / 3600),
             "points": points_used,
             "reset_at": hour_floor(reset + HOUR / 2).isoformat() if reset else None,
+            "intervals": intervals,
         }
-        for hour, (seconds, points_used, reset) in chosen.items()
+        for hour, (seconds, points_used, reset, intervals) in chosen.items()
     }
 
 
 def demand(work):
-    tokens = collections.defaultdict(dict)
+    spans = {}
     for d in work:
         record = d["tier0"]
         if record["own_input_tokens"] is None and record["own_output_tokens"] is None:
             continue
         total = (record["own_input_tokens"] or 0) + (record["own_output_tokens"] or 0)
         end = timestamp(d["completed_at"]) if d["completed_at"] else start(d)
-        for bucket, share in hours(start(d), end).items():
-            tokens[bucket][d["dispatch_id"]] = total * share
-    return tokens
+        spans[d["dispatch_id"]] = (start(d), end, total)
+    return spans
+
+
+def observed_tokens(span, intervals):
+    begin, end, total = span
+    if end <= begin:
+        return total if any(b <= begin < e for b, e in intervals) else 0.0
+    seconds = sum(
+        max(0.0, (min(end, e) - max(begin, b)).total_seconds()) for b, e in intervals
+    )
+    return total * seconds / (end - begin).total_seconds()
 
 
 def in_scope(dispatch, provider, scope):
@@ -562,7 +587,7 @@ def quota_estimate(envelope, rows):
     )
     last = timestamp(envelope["window"]["end_inclusive"])
     supply = observed_hours(rows, first, last)
-    tokens = demand(work.values())
+    spans = demand(work.values())
     windows = {}
     estimates = collections.defaultdict(lambda: collections.defaultdict(float))
     covered = collections.defaultdict(lambda: collections.defaultdict(float))
@@ -588,10 +613,11 @@ def quota_estimate(envelope, rows):
         window["observed_hours"] += hour["coverage"]
         window["points_observed"] += hour["points"]
         eligible = {
-            ident: amount * hour["coverage"]
-            for ident, amount in tokens.get(bucket, {}).items()
+            ident: observed_tokens(span, hour["intervals"])
+            for ident, span in spans.items()
             if in_scope(work[ident], provider, scope)
         }
+        eligible = {ident: amount for ident, amount in eligible.items() if amount}
         total = sum(eligible.values())
         window["dispatch_tokens_in_observed_time"] += total
         if not total:
@@ -671,10 +697,11 @@ def quota_estimate(envelope, rows):
         "window": envelope["window"],
         "method": (
             "Quota points are drops of remaining percent between consecutive readings of one "
-            f"collector series, skipped across resets and gaps over {QUOTA_GAP}, spread evenly over UTC "
-            "hours. Where collectors of one account overlap, each hour keeps the series that observed "
-            "it longest. Each hour's points are distributed over the own input plus output tokens of "
-            "work dispatches of the matching provider and scope active in that hour, with each "
+            f"collector series, skipped across window resets, failure or sign-out readings without a "
+            f"value, and gaps over {QUOTA_GAP}, spread evenly over UTC hours. Where collectors of one "
+            "account overlap, each hour keeps the series that observed it longest. Each hour's points "
+            "are distributed over the own input plus output tokens that work dispatches of the matching "
+            "provider and scope spent inside that series' observed intervals of the hour, with each "
             "dispatch's tokens spread evenly over its duration."
         ),
         "limits": [

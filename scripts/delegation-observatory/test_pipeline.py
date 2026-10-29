@@ -17,7 +17,7 @@ import export
 import extract
 import inventory
 import pipeline
-from storage import digest, dump, jsonl, latest, load, load_rows, writer
+from storage import digest, dump, file_digest, jsonl, latest, load, load_rows, writer
 
 START = "2026-10-21T14:40:15.993Z"
 END = "2026-10-28T14:40:15.993Z"
@@ -84,6 +84,19 @@ def work_dispatch(
 def with_tier0(dispatches):
     records = extract.tier0(dispatches)
     return [dict(d, tier0=records[d["dispatch_id"]]) for d in dispatches]
+
+
+def tier0_links(dispatches):
+    return {
+        ident.split(":")[-1]: {
+            k: v for k, v in record.items() if k in extract.LINK_FIELDS and v
+        }
+        for ident, record in extract.tier0(dispatches).items()
+    }
+
+
+def milliseconds(clock):
+    return int(extract.timestamp("2026-10-22T" + clock + ":00Z").timestamp() * 1000)
 
 
 def fixture_database(path):
@@ -309,22 +322,9 @@ class PipelineTests(unittest.TestCase):
             work_dispatch(
                 "t-run", "gpt", "13:00", "13:01", status="interrupted", task="t"
             ),
-            work_dispatch(
-                "t-send",
-                "gpt",
-                "13:02",
-                "13:05",
-                kind="continuation",
-                task="t",
-                attempt=2,
-            ),
+            work_dispatch("t-resume", "gpt", "13:02", "13:05", task="t", attempt=2),
         ]
-        links = {
-            ident.split(":")[-1]: {
-                k: v for k, v in record.items() if k in extract.LINK_FIELDS and v
-            }
-            for ident, record in extract.tier0(rows).items()
-        }
+        links = tier0_links(rows)
         self.assertEqual(
             links["x-review-d-r1"], {"replaced_by": "delegate-task:x-review-d-r2"}
         )
@@ -333,8 +333,46 @@ class PipelineTests(unittest.TestCase):
         )
         self.assertEqual(links["y-review-b-r2"], {})
         self.assertEqual(links["z-impl-r2"], {})
-        self.assertEqual(links["t-send"], {"retry_of": "delegate-task:t-run"})
-        self.assertEqual(links["t-run"], {"retried_by": "delegate-task:t-send"})
+        self.assertEqual(links["t-resume"], {"retry_of": "delegate-task:t-run"})
+        self.assertEqual(links["t-run"], {"retried_by": "delegate-task:t-resume"})
+
+    def test_tier0_links_replacements_that_add_seat_attempt_or_marker_tokens(self):
+        links = tier0_links(
+            [
+                work_dispatch("w3", "muse", "10:00", "10:06", status="failed"),
+                work_dispatch("w11", "muse", "10:00", "10:05", status="failed"),
+                work_dispatch("w3-r2-codex", "gpt", "10:07", "10:20"),
+                work_dispatch("w11-r2-claude", "claude", "10:07", "10:20"),
+                work_dispatch("nits", "gpt", "11:00", "11:05", status="interrupted"),
+                work_dispatch("nits-grok", "grok", "11:05", "11:15"),
+                work_dispatch(
+                    "yaml-source-r1", "muse", "12:00", "12:10", status="interrupted"
+                ),
+                work_dispatch(
+                    "yaml-source-stall-replacement-r2", "muse", "12:11", "12:20"
+                ),
+                work_dispatch(
+                    "check-2", "muse", "13:00", "13:05", status="interrupted"
+                ),
+                work_dispatch("check-c-retry", "muse", "13:06", "13:10"),
+                work_dispatch("plan-1", "grok", "14:00", "14:05", status="interrupted"),
+                work_dispatch("plan-2", "claude", "14:05", "14:10"),
+            ]
+        )
+        self.assertEqual(
+            {
+                name: link["replaced_by"]
+                for name, link in links.items()
+                if "replaced_by" in link
+            },
+            {
+                "w3": "delegate-task:w3-r2-codex",
+                "w11": "delegate-task:w11-r2-claude",
+                "nits": "delegate-task:nits-grok",
+                "yaml-source-r1": "delegate-task:yaml-source-stall-replacement-r2",
+                "check-2": "delegate-task:check-c-retry",
+            },
+        )
 
     def test_round_inventory_keeps_replacements_and_natives_with_their_panel(self):
         dispatches = with_tier0(
@@ -395,6 +433,42 @@ class PipelineTests(unittest.TestCase):
             "one failed muse attempt that a panel member replaced", check["reason"]
         )
         self.assertIn("one completed grok member, a family outside", check["reason"])
+
+    def test_round_family_buckets_count_only_families_with_a_completed_member(self):
+        dispatches = with_tier0(
+            [
+                work_dispatch(
+                    "x-architect-claude-1",
+                    "claude",
+                    "10:00",
+                    "10:05",
+                    status="interrupted",
+                    role="design",
+                ),
+                work_dispatch(
+                    "x-architect-codex-1", "gpt", "10:00", "10:10", role="design"
+                ),
+                work_dispatch(
+                    "x-architect-grok-1", "grok", "10:00", "10:10", role="design"
+                ),
+            ]
+        )
+        envelope = {
+            "generation_id": "fixture",
+            "window": {"start_inclusive": START, "end_inclusive": END},
+            "dispatches": dispatches,
+            "attribution_coverage": [],
+            "panels": [],
+        }
+        result = inventory.round_inventory(envelope)
+        self.assertEqual(
+            [(r["family_count"], r["completed_families"]) for r in result["rounds"]],
+            [(3, ["gpt", "grok"])],
+        )
+        self.assertIsNone(result["summary"]["three_family"])
+        self.assertEqual(
+            result["summary"]["by_completed_family_count"]["2"]["rounds"], 1
+        )
 
     def test_seat_coverage_compares_current_sheet_with_history(self):
         sheet = """# quota claude: window=semanal used=15%
@@ -474,6 +548,95 @@ interrogate reviewers: claudeAgent/claude-opus-5-5 effort=xhigh, antigravity/gem
         }
         self.assertEqual(points, {"a": 7.5, "b": 2.5})
         self.assertEqual(result["summary"]["points_observed"], 10.0)
+
+    def test_quota_rate_divides_points_by_tokens_spent_in_observed_time(self):
+        envelope = {
+            "generation_id": "fixture",
+            "window": {
+                "start_inclusive": "2026-10-22T10:00:00Z",
+                "end_inclusive": "2026-10-22T11:00:00Z",
+            },
+            "dispatches": with_tier0(
+                [work_dispatch("a", "gpt", "10:00", "10:30", tokens=1000000)]
+            ),
+        }
+        rows = [
+            (1, "codex", "weekly", "collector", milliseconds(clock), left, None, 168.0)
+            for clock, left in (("10:00", 90.0), ("10:30", 85.0))
+        ]
+        (seat,) = inventory.quota_estimate(envelope, rows)["seats"]
+        self.assertEqual(
+            (
+                seat["estimated_points"],
+                seat["points_per_million_tokens"],
+                seat["extrapolated_points_per_dispatch"],
+            ),
+            (5.0, 5.0, 5.0),
+        )
+
+    def test_quota_readings_never_pair_across_barriers_or_resets(self):
+        path = self.base / "quota-history.sqlite"
+        connection = sqlite3.connect(path)
+        connection.execute(
+            "CREATE TABLE observations (credential TEXT, provider TEXT, window_id TEXT, "
+            "label TEXT, observed_at_ms INTEGER, remaining REAL, reset_at_ms INTEGER, "
+            "period_hours REAL)"
+        )
+        weekly = milliseconds("10:00") + 3 * 24 * 3600 * 1000
+        readings = [
+            ("a", "codex", "weekly", "10:00", 90.0, weekly, 168.0),
+            ("a", "codex", "weekly", "10:30", None, None, 168.0),
+            ("a", "codex", "weekly", "11:00", 70.0, weekly, 168.0),
+            ("b", "xai", "five-hour", "10:00", 40.0, milliseconds("10:20"), 5.0),
+            ("b", "xai", "five-hour", "10:40", 30.0, milliseconds("15:20"), 5.0),
+            ("c", "meta", "weekly", "10:00", 90.0, weekly, 168.0),
+            ("c", "meta", "weekly", "10:30", 85.0, weekly, 168.0),
+        ]
+        connection.executemany(
+            "INSERT INTO observations VALUES (?, ?, ?, 'collector', ?, ?, ?, ?)",
+            [
+                (credential, provider, window, milliseconds(clock), left, reset, hours)
+                for credential, provider, window, clock, left, reset, hours in readings
+            ],
+        )
+        connection.commit()
+        connection.close()
+        envelope = {
+            "generation_id": "fixture",
+            "window": {
+                "start_inclusive": "2026-10-22T10:00:00Z",
+                "end_inclusive": "2026-10-22T12:00:00Z",
+            },
+            "dispatches": [],
+        }
+        result = inventory.quota_estimate(envelope, inventory.observations(path))
+        self.assertEqual(
+            {w["quota_provider"]: w["points_observed"] for w in result["windows"]},
+            {"meta": 5.0},
+        )
+
+    def test_continuation_turn_after_a_cancelled_turn_is_not_a_retry(self):
+        links = tier0_links(
+            [
+                work_dispatch(
+                    "t-run", "gpt", "13:00", "13:01", status="cancelled", task="t"
+                ),
+                work_dispatch(
+                    "t-send",
+                    "gpt",
+                    "13:02",
+                    "13:05",
+                    status="interrupted",
+                    kind="continuation",
+                    task="t",
+                    attempt=2,
+                ),
+                work_dispatch("t-resume", "gpt", "13:06", "13:09", task="t", attempt=3),
+            ]
+        )
+        self.assertEqual(links["t-run"], {})
+        self.assertEqual(links["t-send"], {"retried_by": "delegate-task:t-resume"})
+        self.assertEqual(links["t-resume"], {"retry_of": "delegate-task:t-send"})
 
     def test_rehashed_unknown_export_field_is_rejected(self):
         _, _, envelope = self.generation()
@@ -889,6 +1052,35 @@ interrogate reviewers: claudeAgent/claude-opus-5-5 effort=xhigh, antigravity/gem
         envelope.pop("generation_id")
         envelope["generation_id"] = digest(envelope)[:24]
         return envelope
+
+    def test_pre_tier0_generation_validates_and_publishes_by_id(self):
+        _, publication, envelope = self.generation()
+        partial = copy.deepcopy(envelope)
+        del partial["dispatches"][0]["tier0"]
+        with self.assertRaisesRegex(ValueError, "does not reproduce"):
+            export.validate_envelope(self.rehash(partial))
+        for row in envelope["dispatches"]:
+            del row["tier0"]
+        del envelope["summary"]["tier0_by_child_seat"]
+        legacy = self.rehash(envelope)
+        ident = legacy["generation_id"]
+        folder = self.root / "export" / ident
+        folder.mkdir()
+        dump(folder / "dashboard.json", legacy)
+        dump(
+            folder / "publication.json",
+            dict(
+                publication,
+                generation_id=ident,
+                file="export/" + ident + "/dashboard.json",
+                sha256=file_digest(folder / "dashboard.json"),
+            ),
+        )
+        args = options(publish_dir=self.base / "published", generation=ident)
+        self.assertEqual(
+            pipeline.validate(self.root, args), {"valid": True, "generation_id": ident}
+        )
+        self.assertEqual(pipeline.publish(self.root, args)["generation_id"], ident)
 
     def test_reference_and_applied_proof_invariants(self):
         _, _, original = self.generation()

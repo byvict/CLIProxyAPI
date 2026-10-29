@@ -20,8 +20,9 @@ EFFORT_OPTIONS = (
     "thinking_level",
 )
 MEMBER_TOKEN = re.compile(
-    r"[a-d]\d?|\d|s\d|claude|codex|gpt|grok|muse|opus|sol|cursor|nonmuse|retry|replacement|fallback"
+    r"[a-d]\d?|\d|s\d|claude|codex|gpt|grok|muse|opus|sol|cursor|spark|nonmuse|retry|replacement|fallback"
 )
+MARKERS = {"retry", "replacement", "fallback"}
 REPLACEMENT_WINDOW = dt.timedelta(hours=2)
 LINK_FIELDS = ("replacement_of", "replaced_by", "retry_of", "retried_by")
 
@@ -126,16 +127,36 @@ def attempt_change(before, after):
     )
 
 
-def same_request(before, after):
-    (before_stem, before_members), (after_stem, after_members) = before, after
-    if [m.rstrip("0123456789") or m for m in before_members[:1]] != [
-        m.rstrip("0123456789") or m for m in after_members[:1]
-    ]:
-        return False
-    changed = [(a, b) for a, b in zip(before_stem, after_stem) if a != b]
-    return len(before_stem) == len(after_stem) and (
-        not changed or (len(changed) == 1 and attempt_change(*changed[0]))
+def seat(members):
+    return next(
+        (m.rstrip("0123456789") or m for m in members if m not in MARKERS), None
     )
+
+
+def stem_edits(before, after):
+    if len(after) == len(before) + 1:
+        found = [
+            stem_edits(before, after[:i] + after[i + 1 :]) for i in range(len(after))
+        ]
+        found = [edits for edits in found if edits is not None]
+        return 1 + min(found) if found else None
+    changed = [(a, b) for a, b in zip(before, after) if a != b]
+    if (
+        len(before) != len(after)
+        or len(changed) > 1
+        or not all(attempt_change(*pair) for pair in changed)
+    ):
+        return None
+    return len(changed)
+
+
+def request_edits(before, after):
+    (before_stem, before_members), (after_stem, after_members) = before, after
+    if seat(before_members) not in (None, seat(after_members)) and MARKERS.isdisjoint(
+        after_members
+    ):
+        return None
+    return stem_edits(before_stem, after_stem)
 
 
 def replaced_dispatch(after, siblings, requests, links):
@@ -157,15 +178,19 @@ def replaced_dispatch(after, siblings, requests, links):
         and timestamp(before["completed_at"])
         <= started
         <= timestamp(before["started_at"]) + REPLACEMENT_WINDOW
-        and same_request(requests[before["dispatch_id"]], request)
         and (
             requests[before["dispatch_id"]][0] == request[0]
             or stems.count(request[0]) == 1
         )
     ]
+    edits = {
+        before["dispatch_id"]: request_edits(requests[before["dispatch_id"]], request)
+        for before in candidates
+    }
     return max(
-        candidates,
+        (before for before in candidates if edits[before["dispatch_id"]] is not None),
         key=lambda before: (
+            -edits[before["dispatch_id"]],
             before["child"]["family"] == after["child"]["family"],
             timestamp(before["completed_at"]),
         ),
@@ -222,7 +247,10 @@ def tier0(dispatches):
     for attempts in tasks.values():
         attempts.sort(key=lambda d: d["observed_attempt_index_in_window"])
         for before, after in zip(attempts, attempts[1:]):
-            if before["status"] in NONCOMPLETED:
+            if (
+                before["status"] in NONCOMPLETED
+                and after["dispatch_kind"] != "continuation"
+            ):
                 link(before, after, "retry_of", "retried_by")
     for siblings in threads.values():
         siblings.sort(key=lambda d: (timestamp(d["started_at"]), d["dispatch_id"]))

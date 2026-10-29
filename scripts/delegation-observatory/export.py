@@ -364,7 +364,8 @@ def validate_shape(envelope):
             ["root", "dispatcher", "child", "usage", "evidence_ids", "tier0"],
         )
         strings(row["evidence_ids"])
-        closed(row["tier0"], TIER0_FIELDS)
+        if "tier0" in row:
+            closed(row["tier0"], TIER0_FIELDS)
         for key in ["root", "dispatcher", "child"]:
             identity = row[key]
             closed(
@@ -466,6 +467,20 @@ def validate_shape(envelope):
         closed(row, EVIDENCE_FIELDS)
 
 
+def has_tier0(envelope):
+    return "tier0_by_child_seat" in envelope["summary"]
+
+
+def without_tier0(envelope):
+    legacy = copy.deepcopy(envelope)
+    legacy.pop("generation_id")
+    del legacy["summary"]["tier0_by_child_seat"]
+    for row in legacy["dispatches"]:
+        del row["tier0"]
+    legacy["generation_id"] = digest(legacy)[:24]
+    return legacy
+
+
 def validate_envelope(envelope):
     validate_shape(envelope)
     if envelope.get("schema_version") != VERSION:
@@ -487,9 +502,10 @@ def validate_envelope(envelope):
     evidence = unique(envelope["evidence"], "evidence_id")
     coverage = unique(envelope["attribution_coverage"], "dispatch_id")
     causes = set()
+    tiered = has_tier0(envelope)
     records = tier0(list(dispatches.values()))
     for row in dispatches.values():
-        if row["tier0"] != records[row["dispatch_id"]]:
+        if row.get("tier0") != (records[row["dispatch_id"]] if tiered else None):
             raise ValueError("Tier-0 record does not reproduce from published dispatch")
         if (
             not timestamp(window["start_inclusive"])
@@ -577,6 +593,8 @@ def validate_envelope(envelope):
         envelope["panels"],
         list(coverage.values()),
     )
+    if not tiered:
+        del summary["tier0_by_child_seat"]
     if summary != envelope["summary"]:
         raise ValueError("Summary does not reproduce from published records")
     attribution = summary["attribution"]
