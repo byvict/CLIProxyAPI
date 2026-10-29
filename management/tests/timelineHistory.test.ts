@@ -115,3 +115,24 @@ describe('recorded timeline bootstrap', () => {
     expect(lane([observation], { quota: { ...live, retained: { status: 'success' } } }).anchorMs).toBeNull();
   });
 });
+
+for (const maxPeriodHours of [5, 168, 336]) {
+  test(`Claude selects its account quota in the ${maxPeriodHours}-hour view, live and recorded`, () => {
+    const windows = [
+      { id: 'seven-day-fable', usedPercent: 0, periodHours: 168, resetAtMs: now + 144 * 3_600_000 },
+      { id: 'seven-day', usedPercent: 29, periodHours: 168, resetAtMs: now + 144 * 3_600_000 + 490 },
+      { id: 'five-hour', usedPercent: 22, periodHours: 5, resetAtMs: now + 3_600_000 },
+    ];
+    const quota = { status: 'success', windows };
+    const provider = 'claude';
+    const samples = quotaObservations('current', provider, quota, now - 60_000);
+    const expectedId = maxPeriodHours === 5 ? 'five-hour' : 'seven-day';
+    for (const result of [
+      buildTimelineLane({ ...input, provider, quota, maxPeriodHours }),
+      lane(samples, { provider, maxPeriodHours }),
+    ]) {
+      expect(result.windowId).toBe(expectedId);
+      expect(result.remaining).toBe(maxPeriodHours === 5 ? 78 : 71);
+    }
+  });
+}

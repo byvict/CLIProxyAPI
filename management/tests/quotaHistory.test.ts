@@ -11,10 +11,13 @@ const now = Date.parse('2026-10-27T15:00:00Z');
 const hour = 3_600_000;
 
 describe('quota history', () => {
-  test('shows reset survival without an exhaustion marker and exposes the basis', () => {
+  test('shows projected exhaustion after reset and exposes the basis', () => {
     const projection = {
       status: 'survives-reset' as const,
       remainingAtReset: 30,
+      exhaustsAtMs: now + 16 * hour,
+      resetAtMs: now + hour,
+      band: 'yellow' as const,
       lookbackHours: 6,
       observedHours: 6,
       coverage: 1,
@@ -28,10 +31,10 @@ describe('quota history', () => {
         createElement(ExhaustionMarker, {
           projection,
           startMs: now,
-          endMs: now + hour,
+          endMs: now + 32 * hour,
         })
       )
-    ).toBe('');
+    ).toContain('left:50%');
     const summary = renderToStaticMarkup(createElement(ProjectionSummary, { projection, now }));
     expect(summary).toContain('Expected to last until reset');
     expect(summary).toContain('Provisional');

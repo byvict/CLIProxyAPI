@@ -41,11 +41,14 @@ describe('symmetric exhaustion bands around reset', () => {
       });
     }
   }
-  test('reports surviving the reset instead of a hypothetical exhaustion', () => {
+  test('keeps the projected exhaustion date when the balance survives reset', () => {
     const projection = quotaProjection(samples(36, 1), now);
     expect(projection.status).toBe('survives-reset');
     if (projection.status !== 'survives-reset') throw new Error('Expected a reset outcome');
     expect(projection.remainingAtReset).toBe(12);
+    expect(projection.exhaustsAtMs).toBe(now + 36 * HOUR_MS);
+    expect(projection.resetAtMs).toBe(reset);
+    expect(projection.band).toBe('blue');
     expect(projection.lookbackHours).toBe(24);
   });
   test('projects before reset at the corresponding symmetric band', () => {
@@ -115,3 +118,23 @@ describe('symmetric exhaustion bands around reset', () => {
     expect(quotaProjection(samples(12, 1), reset).status).toBe('reset-passed');
   });
 });
+
+for (const windowId of ['gemini-models/gemini-weekly', 'claude-and-gpt-models/3p-weekly']) {
+  test(`keeps ${windowId} consumption evidence across same-cycle balance increases`, () => {
+    const readings = [60, 59, 59.2, 58.2, 57.2, 57.4, 56.4, 56.5];
+    const history = readings.map((remaining, index): QuotaObservation => ({
+      credential: 'agy', provider: 'antigravity', windowId, label: 'Weekly',
+      observedAtMs: now - (readings.length - 1 - index) * HOUR_MS / 2,
+      remaining, resetAtMs: now + 120 * HOUR_MS, periodHours: 168,
+    }));
+    const projection = quotaProjection(history, now);
+    expect(projection.status).toBe('projected');
+    if (projection.status !== 'projected') throw new Error(projection.status);
+    expect(projection.ratePpH).toBeCloseTo(2);
+    expect(projection.observedHours).toBe(2);
+    expect(projection.exhaustsAtMs).toBe(now + 28.25 * HOUR_MS);
+    const nextCycle = history.map((sample, index) => index < history.length - 1
+      ? sample : { ...sample, resetAtMs: now + 168 * HOUR_MS, remaining: 100 });
+    expect(quotaProjection(nextCycle, now).status).toBe('insufficient');
+  });
+}

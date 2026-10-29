@@ -67,13 +67,16 @@ describe('cycle-aware exhaustion estimates', () => {
     expect(missing.coverage).toBe(0.25);
     expect(missing.provisional).toBe(true);
   });
-  test('reports unstable recent consumption without a precise marker', () => {
+  test('keeps a provisional projection when the recent pace changes', () => {
     const data = history(24, 30, 1);
     data.forEach((s) => {
       if (s.observedAtMs >= now - 6 * hour) s.remaining = 30;
     });
     const result = quotaProjection(data, now);
-    expect(result.status).toBe('unstable');
+    expect(result.status).toBe('projected');
+    if (result.status !== 'projected') throw new Error(result.status);
+    expect(result.provisional).toBe(true);
+    expect(result.exhaustsAtMs).toBeGreaterThan(now);
   });
   test('keeps observed idle time and does not claim zero use across gaps', () => {
     const data = history(24, 87, 0);
