@@ -3,6 +3,7 @@
 ## 8.0.44-local.13
 
 - Draw the Antigravity Claude & GPT quota pool as an `Other` timeline lane directly below the Antigravity (Gemini) lane, with its own weekly balance, window, recorded readings and forecast.
+- Ignore root-path requests from local loopback port scanners in the OAuth session proxy tests, which failed the deploy gate as false direct-fallback hits.
 
 ## 8.0.44-local.12
 
