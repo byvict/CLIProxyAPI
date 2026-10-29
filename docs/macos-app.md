@@ -65,7 +65,7 @@ python3 -B scripts/macos-app.py deploy
 ```
 
 The command uses the existing Go toolchain recorded in
-`/Volumes/Arquivos/cliproxyapi-build/toolchain-bin-path.txt` and the installed Bun 1.4.3.
+`~/Library/Caches/CLIProxyAPI-build/toolchain-bin-path.txt` and the installed Bun 1.4.3.
 On another Mac, make Go, Bun 1.4.3, Git, and Python 3.9 or newer available in `PATH`.
 
 Deployment requires a clean `main` matching the pushed `fork/main`. It runs the
@@ -118,10 +118,10 @@ Logs are `~/Library/Logs/CLIProxyAPI/launchd.stdout.log` and `launchd.stderr.log
 After installation, send `SIGTERM` to the LaunchAgent once. Confirm that launchd
 creates a new PID and that health still reports the expected commit.
 
-Keep the Mac powered on and awake and the user logged in. Deployment and the
-delegation page also need the SSD mounted. Locking the screen is supported. After a
-restart, unlock FileVault and log in; launchd then starts the service. A reboot is a
-separate acceptance check and stays unverified until performed.
+Keep the Mac powered on and awake and the user logged in. The delegation page also
+needs the SSD mounted. Locking the screen is supported. After a restart, unlock
+FileVault and log in; launchd then starts the service. A reboot is a separate
+acceptance check and stays unverified until performed.
 
 The main panel's quota collection still requires an open panel. This installation
 does not change collection schedules, session lifetimes, or provider authentication.

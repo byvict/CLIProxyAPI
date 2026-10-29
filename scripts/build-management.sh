@@ -8,6 +8,7 @@ fi
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 mkdir -p "$1"
 build_dir="$(mktemp -d "$1/management-XXXXXXXX")"
+trap 'rm -rf "$build_dir"' EXIT
 upstream_repo="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["repository"])' "$repo_root/management/upstream.json")"
 upstream_commit="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["commit"])' "$repo_root/management/upstream.json")"
 git -C "$build_dir" init -q
@@ -22,5 +23,4 @@ bun install --frozen-lockfile
 bun run verify
 mkdir -p "$(dirname "$2")"
 cp dist/index.html "$2"
-echo "Management source: $build_dir"
 echo "Management artifact: $2"
