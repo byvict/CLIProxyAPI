@@ -3136,3 +3136,14 @@ diff --git a/src/features/quota/components/QuotaTimeline.module.scss b/src/featu
 -      if (this.emitEvents() && error.response?.status === 401) {
 +      if (typeof window !== 'undefined' && this.emitEvents() && error.response?.status === 401) {
          window.dispatchEvent(new Event('unauthorized'));
+
+--- a/src/services/api/authFiles.ts
++++ b/src/services/api/authFiles.ts
+@@ -626,4 +626,5 @@
+   downloadText: async (name: string, client = apiClient): Promise<string> => {
+-    const blob = await authFilesApi.download(name, client);
+-    return blob.text();
++    return client.get<string>(`/credentials/download?name=${encodeURIComponent(name)}`, {
++      responseType: 'text',
++    });
+   },

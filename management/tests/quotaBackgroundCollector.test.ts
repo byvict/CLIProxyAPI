@@ -44,3 +44,16 @@ test('collects and persists weekly quota without a browser and honors shared res
     expect(writes).toHaveLength(1);
   } finally { server.stop(true); }
 });
+
+test('reads the Muse credential as text outside the browser', async () => {
+  const { authFilesApi } = await import('../src/services/api/authFiles');
+  const { apiClient } = await import('../src/services/api/client');
+  const content = JSON.stringify({ type: 'meta', dca_token: 'dca:synthetic' });
+  const server = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch: () =>
+    new Response(content, { headers: { 'content-type': 'application/json' } }),
+  });
+  try {
+    apiClient.setConfig({ apiBase: server.url.origin, managementKey: 'synthetic' });
+    expect(await authFilesApi.downloadText('meta.json')).toBe(content);
+  } finally { server.stop(true); }
+});

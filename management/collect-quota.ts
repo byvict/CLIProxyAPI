@@ -8,6 +8,7 @@ import { CLAUDE_CONFIG } from './src/features/quota/providers/claude/data';
 import { CODEX_CONFIG } from './src/features/quota/providers/codex/data';
 import { DEVIN_CONFIG } from './src/features/quota/providers/devin/data';
 import { KIMI_CONFIG } from './src/features/quota/providers/kimi/data';
+import { MetaQuotaError } from './src/features/quota/providers/meta/requests';
 import { META_CONFIG } from './src/features/quota/providers/meta/data';
 import { XAI_CONFIG } from './src/features/quota/providers/xai/data';
 import type { QuotaProviderData } from './src/features/quota/providers/types';
@@ -45,8 +46,9 @@ export async function collectQuota(apiBase: string, managementKey: string) {
     if (!adapter || file.disabled) return { provider: file.type, status: 'disabled' };
     try {
       return { provider: adapter.type, ...await adapter.collect(file) };
-    } catch {
-      return { provider: adapter.type, status: 'error' };
+    } catch (error: unknown) {
+      return { provider: adapter.type, status: 'error',
+        reason: error instanceof MetaQuotaError ? error.code : 'request_failed' };
     }
   }));
 }

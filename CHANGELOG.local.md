@@ -1,5 +1,9 @@
 # Local releases
 
+## 8.0.44-local.25
+
+- Read credential downloads as text for the Muse quota collector, without depending on browser Blob responses. Record safe failure codes without provider payloads or credentials.
+
 ## 8.0.44-local.24
 
 - Start quota history write transactions in SQLite immediate mode so concurrent account collection does not fail while upgrading a read transaction to a writer.
