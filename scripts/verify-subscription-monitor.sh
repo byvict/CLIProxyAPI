@@ -2,7 +2,7 @@
 set -eu
 
 SUBMON_VERIFY_ROOT=${SUBMON_VERIFY_ROOT:-/Volumes/Arquivos/cliproxyapi-tests/v1-owner}
-SUBMON_BUILD_ROOT=${SUBMON_BUILD_ROOT:-$HOME/Library/Caches/CLIProxyAPI-build}
+SUBMON_BUILD_ROOT=${SUBMON_BUILD_ROOT:-$HOME/Dev/CLIProxyAPI/build}
 export PATH="$SUBMON_BUILD_ROOT/go1.27.3/go/bin:$PATH"
 export GOTOOLCHAIN=local
 export GOCACHE="$SUBMON_BUILD_ROOT/gocache"
