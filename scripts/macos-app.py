@@ -20,7 +20,8 @@ import urllib.request
 REPO = Path(__file__).resolve().parent.parent
 LABEL = 'com.byvict.cliproxyapi'
 IMPORT_LABEL = LABEL + '.performance-import'
-ARTIFACTS = ('cli-proxy-api', 'management.html', 'import-performance-history.py')
+QUOTA_LABEL = LABEL + '.quota-collector'
+ARTIFACTS = ('cli-proxy-api', 'management.html', 'import-performance-history.py', 'quota-collector')
 RUNTIME = Path.home() / 'Dev/CLIProxyAPI/app'
 BUILD_ROOT = Path.home() / 'Dev/CLIProxyAPI/build'
 
@@ -142,6 +143,19 @@ def import_plist(runtime):
     })
 
 
+def quota_plist(runtime):
+    return plistlib.dumps({
+        'Label': QUOTA_LABEL,
+        'ProgramArguments': [str(runtime / 'current/quota-collector'), str(runtime),
+                             str(LOGS / 'quota-collector.json')],
+        'WorkingDirectory': str(Path.home()),
+        'RunAtLoad': True, 'StartInterval': 300,
+        'ProcessType': 'Background',
+        'StandardOutPath': '/dev/null',
+        'StandardErrorPath': str(LOGS / 'quota-collector.stderr.log'),
+    })
+
+
 def check_access(runtime):
     if not LAUNCHER.is_file():
         raise RuntimeError('Install the launcher with scripts/install-macos-launcher.sh first.')
@@ -256,6 +270,10 @@ def activate(runtime, release):
         atomic_link(runtime / 'previous', previous)
     write_shortcuts(runtime)
     install_agent(IMPORT_LABEL, import_plist(runtime))
+    if (release / 'quota-collector').is_file():
+        install_agent(QUOTA_LABEL, quota_plist(runtime))
+    else:
+        run('launchctl', 'bootout', f'gui/{os.getuid()}/{QUOTA_LABEL}', capture=True, check=False)
     print(json.dumps({'release': str(release), 'health': reading}, indent=2))
 
 
@@ -278,7 +296,7 @@ def main():
     runtime = args.runtime.resolve()
     validate_runtime(runtime)
     if args.command == 'status':
-        for label in (LABEL, IMPORT_LABEL):
+        for label in (LABEL, IMPORT_LABEL, QUOTA_LABEL):
             result = run('launchctl', 'print', f'gui/{os.getuid()}/{label}', capture=True, check=False)
             print(label)
             print('\n'.join(line.strip() for line in result.stdout.splitlines()
@@ -316,7 +334,7 @@ def main():
         elif args.command == 'start':
             activate(runtime, (runtime / 'current').resolve())
         else:
-            for label in (LABEL, IMPORT_LABEL):
+            for label in (LABEL, IMPORT_LABEL, QUOTA_LABEL):
                 run('launchctl', 'bootout', f'gui/{os.getuid()}/{label}', capture=True, check=False)
                 if args.command == 'uninstall':
                     (Path.home() / 'Library/LaunchAgents' / (label + '.plist')).unlink(missing_ok=True)

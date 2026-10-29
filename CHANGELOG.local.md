@@ -1,5 +1,12 @@
 # Local releases
 
+## 8.0.44-local.23
+
+- Keep quota history attached to the provider and relative credential path when the installation moves. Preserve current management identifiers in API responses.
+- Add a checked migration for observations split across former runtime directories, with a database backup and conflict rejection.
+- Collect quota in a scheduled macOS job when the panel is closed or hidden, using the existing provider readers and shared polling reservations. A visible panel keeps priority.
+- Preserve the weekly projection criteria and mark incomplete coverage as provisional.
+
 ## 8.0.44-local.22
 
 - Mark GrokBot consumption with subtle diagonal hatching inside the shared quota timeline bar. Keep GrokBuild consumption plain and omit the split when product usage is unavailable or the quota window has reset.

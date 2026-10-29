@@ -74,7 +74,7 @@ the pinned management panel. The panel build runs its tests, type checks, lint, 
 production build. A source change during the build aborts activation.
 
 Each release contains `cli-proxy-api`, `management.html`,
-`import-performance-history.py`, and a `release.json` with SHA-256 checksums under
+`import-performance-history.py`, `quota-collector`, and a `release.json` with SHA-256 checksums under
 `~/Dev/CLIProxyAPI/app/releases/`. The `current` link selects the
 release. Redeployment checks artifacts against their manifest, which lists only that
 release's files, so releases built before the importer became an artifact remain valid
@@ -118,8 +118,21 @@ Keep the Mac powered on and awake and the user logged in. Locking the screen is 
 FileVault and log in; launchd then starts the service. A reboot is a separate
 acceptance check and stays unverified until performed.
 
-The main panel's quota collection still requires an open panel. This installation
-does not change collection schedules, session lifetimes, or provider authentication.
+The `com.byvict.cliproxyapi.quota-collector` job checks every five minutes for due
+quota readings. It uses the same readers and 30-minute reservations as the panel.
+While the visible panel polls, it has priority. After 35 minutes without a foreground
+poll, the background job takes over. The Mac must remain awake. Failures stay as
+missing observations, never invented zero consumption. Its latest receipt is
+`~/Library/Logs/CLIProxyAPI/quota-collector.json`. Stop and uninstall cover this job.
+
+History identifies a credential by provider and its relative path inside `auths`,
+independently of the runtime location. To recover records from installations that
+predate this change, run `scripts/migrate-quota-history.py` with `--database`,
+`--auth-dir`, and one `--old-auth-dir` for each previous authentication directory.
+The default is a dry run. Add `--apply` after checking the reported counts.
+The script backs up the database before its first change, preserves polling
+reservations, and aborts on conflicting observations. Repeating it is safe.
+Renaming or replacing a credential file is outside this relocation migration.
 
 ## Performance history import
 

@@ -75,7 +75,9 @@ class DeploymentTests(unittest.TestCase):
                     patch.object(app.HTTP, 'open', return_value=io.BytesIO((candidate / 'management.html').read_bytes())), \
                     patch.object(app, 'install_agent') as install:
                 app.activate(root, candidate)
-            install.assert_called_once_with(app.IMPORT_LABEL, app.import_plist(root))
+            self.assertEqual(install.call_count, 2)
+            install.assert_any_call(app.IMPORT_LABEL, app.import_plist(root))
+            install.assert_any_call(app.QUOTA_LABEL, app.quota_plist(root))
             self.assertEqual((root / 'current').resolve(), candidate)
             self.assertEqual((root / 'previous').resolve(), previous)
             self.assertIn('/bin/launchctl', (root / 'Iniciar.command').read_text())
@@ -142,7 +144,7 @@ class DeploymentTests(unittest.TestCase):
             (runtime / 'config.yaml').write_text('management:\n  disable-auto-update-panel: true\n')
             agents = home / 'Library/LaunchAgents'
             agents.mkdir(parents=True)
-            plists = [agents / (label + '.plist') for label in (app.LABEL, app.IMPORT_LABEL)]
+            plists = [agents / (label + '.plist') for label in (app.LABEL, app.IMPORT_LABEL, app.QUOTA_LABEL)]
             for path in plists:
                 path.write_bytes(b'')
             for command, remaining in [('stop', plists), ('uninstall', [])]:
@@ -151,7 +153,7 @@ class DeploymentTests(unittest.TestCase):
                         patch('sys.argv', ['macos-app.py', command, '--runtime', str(runtime)]):
                     app.main()
                     booted = [call.args[2] for call in run.call_args_list if call.args[1] == 'bootout']
-                    self.assertEqual(booted, [f'gui/{os.getuid()}/{app.LABEL}', f'gui/{os.getuid()}/{app.IMPORT_LABEL}'])
+                    self.assertEqual(booted, [f'gui/{os.getuid()}/{app.LABEL}', f'gui/{os.getuid()}/{app.IMPORT_LABEL}', f'gui/{os.getuid()}/{app.QUOTA_LABEL}'])
                     self.assertEqual(sorted(agents.iterdir()), sorted(remaining))
 
     def test_deploy_requires_clean_pushed_main(self):

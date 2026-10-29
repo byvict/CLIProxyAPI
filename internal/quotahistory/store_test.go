@@ -59,7 +59,7 @@ func TestPollCadenceSurvivesReopen(t *testing.T) {
 		{"other", 1001, true},
 		{"muse", 1000 + 30*60*1000, true},
 	} {
-		claimed, err := ReservePoll(context.Background(), path, step.credential, step.now, 30*60*1000)
+		claimed, err := ReservePoll(context.Background(), path, step.credential, step.now, 30*60*1000, false)
 		if err != nil || claimed != step.want {
 			t.Fatalf("reserve %s at %d: claimed %v, want %v, error %v", step.credential, step.now, claimed, step.want, err)
 		}
@@ -124,6 +124,25 @@ func TestPeriodReadPreservesSnapshotAndView(t *testing.T) {
 					t.Fatalf("limited view differs for %v", period)
 				}
 			}
+		}
+	}
+}
+
+func TestBackgroundCollectionTakesOverWhenPanelStopsPolling(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "history.sqlite")
+	minute := int64(60_000)
+	steps := []struct {
+		at                  int64
+		background, claimed bool
+	}{
+		{0, false, true}, {30, true, false}, {30, false, true}, {60, true, false},
+		{65, true, true}, {66, true, false}, {67, false, false}, {97, false, true},
+	}
+	for _, s := range steps {
+		got, err := ReservePoll(ctx, path, "account", s.at*minute, 30*minute, s.background)
+		if err != nil || got != s.claimed {
+			t.Fatalf("at %d background %v: %v %v", s.at, s.background, got, err)
 		}
 	}
 }

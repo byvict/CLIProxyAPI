@@ -55,7 +55,7 @@ func open(path string) (*sql.DB, error) {
 }
 
 // ReservePoll keeps collection cadence across tabs and panel restarts.
-func ReservePoll(ctx context.Context, path, credential string, nowMs, intervalMs int64) (bool, error) {
+func ReservePoll(ctx context.Context, path, credential string, nowMs, intervalMs int64, background bool) (bool, error) {
 	db, err := open(path)
 	if err != nil {
 		return false, err
@@ -69,14 +69,41 @@ func ReservePoll(ctx context.Context, path, credential string, nowMs, intervalMs
 		credential TEXT PRIMARY KEY, next_at_ms INTEGER NOT NULL) WITHOUT ROWID`); err != nil {
 		return false, err
 	}
-	result, err := db.ExecContext(ctx, `INSERT INTO polls VALUES (?, ?)
-		ON CONFLICT(credential) DO UPDATE SET next_at_ms=excluded.next_at_ms
-		WHERE polls.next_at_ms <= ?`, credential, nowMs+intervalMs, nowMs)
+	if _, err = db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS foreground_collectors (
+        credential TEXT PRIMARY KEY, until_ms INTEGER NOT NULL) WITHOUT ROWID`); err != nil {
+		return false, err
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer func() {
+		if errRollback := tx.Rollback(); errRollback != nil && errRollback != sql.ErrTxDone {
+			log.WithError(errRollback).Error("roll back quota poll")
+		}
+	}()
+	if !background {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO foreground_collectors VALUES (?, ?)
+          ON CONFLICT(credential) DO UPDATE SET until_ms=excluded.until_ms`, credential, nowMs+intervalMs+5*60_000); err != nil {
+			return false, err
+		}
+	}
+	result, err := tx.ExecContext(ctx, `INSERT INTO polls
+        SELECT ?, ? WHERE NOT ? OR NOT EXISTS (
+          SELECT 1 FROM foreground_collectors WHERE credential=? AND until_ms>?)
+        ON CONFLICT(credential) DO UPDATE SET next_at_ms=excluded.next_at_ms
+        WHERE polls.next_at_ms <= ?`, credential, nowMs+intervalMs, background, credential, nowMs, nowMs)
 	if err != nil {
 		return false, err
 	}
 	changed, err := result.RowsAffected()
-	return changed > 0, err
+	if err != nil {
+		return false, err
+	}
+	if err = tx.Commit(); err != nil {
+		return false, err
+	}
+	return changed > 0, nil
 }
 
 func Record(ctx context.Context, path string, observations []Observation) error {

@@ -29,6 +29,10 @@ func (h *Handler) GetQuotaHistory(c *gin.Context) {
 	if !all {
 		since = now.Add(-period).UnixMilli()
 	}
+	identities, ready := h.prepareQuotaHistory(c)
+	if !ready {
+		return
+	}
 	observations, err := quotahistory.Read(c.Request.Context(), h.quotaHistoryPath(), since, now.UnixMilli())
 	if err != nil {
 		log.WithError(err).Error("read quota history")
@@ -36,10 +40,15 @@ func (h *Handler) GetQuotaHistory(c *gin.Context) {
 		return
 	}
 	c.Header("Cache-Control", "no-store")
+	quotaHistoryVisible(observations, identities)
 	c.JSON(http.StatusOK, gin.H{"observations": observations})
 }
 
 func (h *Handler) quotaHistoryViewData(c *gin.Context, period time.Duration) ([]quotahistory.Observation, quotahistory.Snapshot, time.Time, bool) {
+	identities, ready := h.prepareQuotaHistory(c)
+	if !ready {
+		return nil, quotahistory.Snapshot{}, time.Time{}, false
+	}
 	now := time.Now()
 	since := now.UnixMilli()
 	if period > 0 {
@@ -60,6 +69,8 @@ func (h *Handler) quotaHistoryViewData(c *gin.Context, period time.Duration) ([]
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not read quota history"})
 		return nil, quotahistory.Snapshot{}, now, false
 	}
+	quotaHistoryVisible(observations, identities)
+	quotaHistoryVisible(metadata, identities)
 	credentials := []quotahistory.Credential{}
 	if h.authManager != nil {
 		for _, auth := range h.authManager.List() {
@@ -131,7 +142,7 @@ func (h *Handler) RecordQuotaHistory(c *gin.Context) {
 			return
 		}
 		// Identity comes from the authenticated proxy credential, never from browser labels.
-		observation.Credential = auth.Index
+		observation.Credential = h.quotaHistoryCredential(auth)
 		observation.Provider = auth.Provider
 	}
 	if err := quotahistory.Record(c.Request.Context(), h.quotaHistoryPath(), body.Observations); err != nil {
@@ -144,7 +155,8 @@ func (h *Handler) RecordQuotaHistory(c *gin.Context) {
 
 func (h *Handler) ReserveQuotaHistoryPoll(c *gin.Context) {
 	var body struct {
-		AuthIndex string `json:"authIndex"`
+		AuthIndex  string `json:"authIndex"`
+		Background bool   `json:"background"`
 	}
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 8192)
 	if err := c.ShouldBindJSON(&body); err != nil {
@@ -156,8 +168,11 @@ func (h *Handler) ReserveQuotaHistoryPoll(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "credential not found"})
 		return
 	}
+	if _, ready := h.prepareQuotaHistory(c); !ready {
+		return
+	}
 	const interval = 30 * time.Minute
-	claimed, err := quotahistory.ReservePoll(c.Request.Context(), h.quotaHistoryPath(), auth.Index, time.Now().UnixMilli(), interval.Milliseconds())
+	claimed, err := quotahistory.ReservePoll(c.Request.Context(), h.quotaHistoryPath(), h.quotaHistoryCredential(auth), time.Now().UnixMilli(), interval.Milliseconds(), body.Background)
 	if err != nil {
 		log.WithError(err).Error("reserve quota history poll")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not reserve quota poll"})

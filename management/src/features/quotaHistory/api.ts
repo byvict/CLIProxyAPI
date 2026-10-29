@@ -41,8 +41,8 @@ export const recordQuotaHistory = (
   client = apiClient
 ) => client.post('/quota-history', { authIndex, observations });
 
-export async function reserveQuotaPoll(authIndex: string, client = apiClient): Promise<boolean> {
-  const response: unknown = await client.post('/quota-history/poll', { authIndex });
+export async function reserveQuotaPoll(authIndex: string, client = apiClient, background = false): Promise<boolean> {
+  const response: unknown = await client.post('/quota-history/poll', { authIndex, background });
   if (!isRecord(response) || typeof response.claimed !== 'boolean')
     throw new Error('Invalid quota poll response');
   return response.claimed;

@@ -17,10 +17,12 @@ git -C "$build_dir" checkout -q --detach FETCH_HEAD
 git -C "$build_dir" apply "$repo_root/management/refinements.patch"
 cp -R "$repo_root/management/src/." "$build_dir/src/"
 cp -R "$repo_root/management/tests/." "$build_dir/tests/"
+cp "$repo_root/management/collect-quota.ts" "$build_dir/"
 python3 "$repo_root/scripts/build-v1-history.py" "$build_dir"
 cd "$build_dir"
 bun install --frozen-lockfile
 bun run verify
 mkdir -p "$(dirname "$2")"
 cp dist/index.html "$2"
+bun build ./collect-quota.ts --compile --outfile "$(dirname "$2")/quota-collector"
 echo "Management artifact: $2"

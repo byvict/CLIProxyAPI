@@ -3118,3 +3118,21 @@ diff --git a/src/features/quota/components/QuotaTimeline.module.scss b/src/featu
  // Align the reset-credit arrow with the top edge of the quota window.
  .resetCreditMarker {
    position: absolute;
+
+--- a/src/services/api/client.ts
++++ b/src/services/api/client.ts
+@@ -149,3 +149,3 @@
+         // Dispatch version updates for store consumers
+-        if (this.emitEvents() && (version || buildDate)) {
++        if (typeof window !== 'undefined' && this.emitEvents() && (version || buildDate)) {
+           window.dispatchEvent(
+@@ -156,3 +156,3 @@
+         }
+-        if (this.emitEvents() && supportsPlugin !== null) {
++        if (typeof window !== 'undefined' && this.emitEvents() && supportsPlugin !== null) {
+           window.dispatchEvent(
+@@ -186,3 +186,3 @@
+       // Dispatch logout for unauthorized responses
+-      if (this.emitEvents() && error.response?.status === 401) {
++      if (typeof window !== 'undefined' && this.emitEvents() && error.response?.status === 401) {
+         window.dispatchEvent(new Event('unauthorized'));

@@ -47,7 +47,7 @@ func TestQuotaHistoryUsesRegisteredCredentialAndValidatesBatch(t *testing.T) {
 		t.Fatalf("record: %d %s", rec.Code, rec.Body.String())
 	}
 	stored, err := quotahistory.Read(context.Background(), h.quotaHistoryPath(), 0, time.Now().UnixMilli())
-	if err != nil || len(stored) != 1 || stored[0].Credential != index || stored[0].Provider != "claude" {
+	if err != nil || len(stored) != 1 || stored[0].Credential != h.quotaHistoryCredential(auth) || stored[0].Provider != "claude" {
 		t.Fatalf("identity not resolved from credential: %+v, %v", stored, err)
 	}
 	invalid := observation
@@ -101,8 +101,8 @@ func TestQuotaHistoryPollingUsesThirtyMinutesForEveryProvider(t *testing.T) {
 				minutes int
 				claimed bool
 			}{{29, false}, {31, true}} {
-				claimed, err := quotahistory.ReservePoll(context.Background(), h.quotaHistoryPath(), index,
-					before.Add(time.Duration(step.minutes)*time.Minute).UnixMilli(), (30 * time.Minute).Milliseconds())
+				claimed, err := quotahistory.ReservePoll(context.Background(), h.quotaHistoryPath(), h.quotaHistoryCredential(auth),
+					before.Add(time.Duration(step.minutes)*time.Minute).UnixMilli(), (30 * time.Minute).Milliseconds(), false)
 				if err != nil || claimed != step.claimed {
 					t.Fatalf("poll after %d minutes: claimed %v, want %v, error %v", step.minutes, claimed, step.claimed, err)
 				}
@@ -154,5 +154,64 @@ func TestQuotaHistoryAllIncludesOlderAccountsWithoutMakingThemCurrent(t *testing
 			}
 			windowID = snapshot.Accounts[0].HistoryWindows[0].ID
 		}
+	}
+}
+
+func TestQuotaHistorySurvivesInstallationMove(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	old := &coreauth.Auth{ID: "nested/account.json", FileName: "account.json", Provider: "codex", Attributes: map[string]string{"path": filepath.Join(root, "old/auths/nested/account.json")}}
+	current := old.Clone()
+	current.Attributes["path"] = filepath.Join(root, "new/auths/nested/account.json")
+	current.Index = ""
+	oldIndex, currentIndex := old.EnsureIndex(), current.EnsureIndex()
+	if oldIndex == currentIndex {
+		t.Fatal("test requires different runtime indices")
+	}
+	manager := coreauth.NewManager(nil, nil, nil)
+	if _, err := manager.Register(ctx, old); err != nil {
+		t.Fatal(err)
+	}
+	h := NewHandler(&config.Config{}, filepath.Join(root, "config.yaml"), manager)
+	now := time.Now().UnixMilli()
+	remaining := 60.0
+	observation := quotahistory.Observation{Credential: oldIndex, Provider: "codex", WindowID: "weekly", Label: "Weekly", ObservedAtMs: now, Remaining: &remaining}
+	if err := quotahistory.Record(ctx, h.quotaHistoryPath(), []quotahistory.Observation{observation}); err != nil {
+		t.Fatal(err)
+	}
+	read := func() []quotahistory.Observation {
+		rec := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(rec)
+		c.Request = httptest.NewRequest(http.MethodGet, "/?period=all", nil)
+		h.GetQuotaHistory(c)
+		if rec.Code != 200 {
+			t.Fatalf("read: %d %s", rec.Code, rec.Body.String())
+		}
+		var body struct {
+			Observations []quotahistory.Observation `json:"observations"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		return body.Observations
+	}
+	if got := read(); len(got) != 1 || got[0].Credential != oldIndex {
+		t.Fatalf("before move: %+v", got)
+	}
+	manager = coreauth.NewManager(nil, nil, nil)
+	if _, err := manager.Register(ctx, current); err != nil {
+		t.Fatal(err)
+	}
+	h.authManager = manager
+	for i := 0; i < 2; i++ {
+		got := read()
+		if len(got) != 1 || got[0].Credential != currentIndex || got[0].ObservedAtMs != now || *got[0].Remaining != 60 {
+			t.Fatalf("after move: %+v", got)
+		}
+	}
+	other := current.Clone()
+	other.ID = "different/account.json"
+	if h.quotaHistoryCredential(other) == h.quotaHistoryCredential(current) {
+		t.Fatal("different relative paths share history")
 	}
 }

@@ -103,8 +103,8 @@ is hidden and checks for due readings when it becomes visible again. Each batch
 finishes before another starts. Failed readings display the provider error and
 retry on the next collection. Muse keeps a 30-minute minimum interval, including
 reopening, because its quota endpoint can issue an API key. Poll reservations
-persist across tabs and panel restarts. Collection stops when the panel closes.
-History remains on the server between sessions. Every successful quota reader, including manual
+persist across tabs and panel restarts. On the macOS installation, the scheduled collector continues when the panel closes. It reuses the same provider readers and polling reservations. A visible panel has priority; the background job takes over after 35 minutes without a foreground poll.
+History remains on the server between sessions. File-backed history identities use the provider and relative credential path, so moving the installation does not split a series. Every successful quota reader, including manual
 refreshes and resets, records observations through the same adapter wrapper.
 
 Verify automatic loading, polling, visibility, slow requests, recovery, and the
