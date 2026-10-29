@@ -2,7 +2,7 @@
 
 Python 3.9+ standard library only, on macOS or Linux (`fcntl`). This pipeline reads real persisted T3 dispatch metadata and imports separately audited judgments. It never executes agent work, reads authentication tables, or infers acceptance/application from result text. `extract.py` and `metrics.py` retain the verified collection's extraction and aggregation rules; `curate.py` is deliberately not a generic auditor.
 
-Run from the repository root. Set `OBSERVATORY_DATA_DIR` to the persistent private data directory on the external SSD, `OBSERVATORY_SEED_DIR` to the preserved verified collection, and `OBSERVATORY_PUBLISH_DIR` to `/Volumes/Arquivos/cliproxyapi-original/delegation-observatory`. The proxy runtime links its `delegation-observatory` entry to that SSD directory. All directory paths must be canonical, with no symlink components. The data and publication parent directories must already exist. The SSD must already be mounted; do not create a replacement mount or an internal-disk fallback.
+Run from the repository root. Set `OBSERVATORY_DATA_DIR` to the persistent private data directory `~/Dev/CLIProxyAPI/app/delegation-observatory-data`, `OBSERVATORY_SEED_DIR` to the preserved verified collection, and `OBSERVATORY_PUBLISH_DIR` to `~/Dev/CLIProxyAPI/app/delegation-observatory`, which the proxy serves. All directory paths must be canonical, with no symlink components. The data and publication parent directories must already exist.
 
 ```sh
 PIPELINE="$PWD/scripts/delegation-observatory/pipeline.py"
@@ -20,7 +20,7 @@ python3 "$PIPELINE" --data-dir "$OBSERVATORY_DATA_DIR" publish \
 
 Attach these steps to the existing T3 routine at **09:00 America/Sao_Paulo**. Scheduling and dispatching the Sol auditor remain the routine owner's responsibility; this CLI does not create a timer or dispatch models.
 
-1. Read the routine's state and referenced manifest. Verify its previous collection/audit owner is finished; an unknown owner status retains that ownership. Confirm the SSD is mounted. A competing CLI writer is refused immediately by the kernel lock; do not remove a lock file to bypass an active writer.
+1. Read the routine's state and referenced manifest. Verify its previous collection/audit owner is finished; an unknown owner status retains that ownership. A competing CLI writer is refused immediately by the kernel lock; do not remove a lock file to bypass an active writer.
 2. Choose one fixed UTC tick end and retain it in the tick record. Collect the cumulative interval using the original start. The source defaults to `$HOME/.t3/userdata/statev2.sqlite`; `--source` accepts an explicit read-only database path for fixtures. A source-path change is refused after initialization.
 
    ```sh

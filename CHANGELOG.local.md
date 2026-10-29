@@ -1,5 +1,10 @@
 # Local releases
 
+## 8.0.44-local.20
+
+- Keep the definitive checkout in `~/Dev/CLIProxyAPI/codigo` and the delegation observatory's publication, data, control and work directories in `~/Dev/CLIProxyAPI/app`. The runtime's `delegation-observatory` is a directory instead of a link to the SSD, so the delegation page no longer needs the SSD mounted.
+- Stop copying `Iniciar.command` and `Parar.command` to `.before-launchd` files on deploy.
+
 ## 8.0.44-local.19
 
 - Export a flat `tier0` record per delegation dispatch with status, interruption, failure, mechanical replacement and retry links, latency, own tokens, provider, model, family, effort and dispatcher and root families, plus a per-seat summary. Existing export fields are unchanged, and generations exported before this release still validate and publish.

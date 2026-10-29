@@ -68,7 +68,6 @@ class DeploymentTests(unittest.TestCase):
     def test_success_keeps_previous_release_and_updates_shortcuts(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory).resolve()
-            (root / 'Iniciar.command').write_text('legacy tmux command')
             previous = self.release(root, 'previous')
             candidate = self.release(root, 'candidate')
             app.atomic_link(root / 'current', previous)
@@ -79,7 +78,6 @@ class DeploymentTests(unittest.TestCase):
             install.assert_called_once_with(app.IMPORT_LABEL, app.import_plist(root))
             self.assertEqual((root / 'current').resolve(), candidate)
             self.assertEqual((root / 'previous').resolve(), previous)
-            self.assertEqual((root / 'Iniciar.command.before-launchd').read_text(), 'legacy tmux command')
             self.assertIn('/bin/launchctl', (root / 'Iniciar.command').read_text())
 
     def test_wrong_served_panel_rolls_back_even_when_health_matches(self):
