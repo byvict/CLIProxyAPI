@@ -23,11 +23,6 @@ export function ProjectionSummary({
         defaultValue: 'Expected to last until reset',
       });
       break;
-    case 'unstable':
-      label = t('quota_history.forecast_unstable', {
-        defaultValue: 'Changing pace · no reliable date',
-      });
-      break;
     case 'no-consumption':
       label = t('quota_history.forecast_no_drop', {
         defaultValue: 'No detectable drop in observed intervals',

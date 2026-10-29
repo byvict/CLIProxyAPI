@@ -38,9 +38,11 @@ export function historyTimelineLane(
       window.periodHours > 0
   );
   const preferredId =
-    input.maxPeriodHours !== undefined && input.maxPeriodHours <= 5 ? 'five-hour' : 'weekly';
+    input.maxPeriodHours !== undefined && input.maxPeriodHours <= 5
+      ? 'five-hour'
+      : input.provider === 'claude' ? 'seven-day' : 'weekly';
   const preferred =
-    input.provider === 'codex'
+    input.provider === 'codex' || input.provider === 'claude'
       ? [...latest.values()].find(
           (window) =>
             window.windowId === preferredId &&

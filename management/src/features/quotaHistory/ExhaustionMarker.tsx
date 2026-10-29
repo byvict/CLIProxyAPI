@@ -12,7 +12,7 @@ export function ExhaustionMarker({
   endMs: number;
 }) {
   const { t, i18n } = useTranslation();
-  if (projection.status !== 'projected') return null;
+  if (projection.status !== 'projected' && projection.status !== 'survives-reset') return null;
   const left = ((projection.exhaustsAtMs - startMs) / (endMs - startMs)) * 100;
   const title =
     t('quota_history.forecast_marker', {
@@ -29,6 +29,9 @@ export function ExhaustionMarker({
       rate: projection.ratePpH.toFixed(2),
     }) +
     ` · ${t('quota_history.forecast_observed', { defaultValue: 'Current cycle: {{observed}}h observed of {{hours}}h · {{coverage}}% coverage', hours: projection.lookbackHours.toFixed(1), observed: projection.observedHours.toFixed(1), coverage: (projection.coverage * 100).toFixed(0) })}` +
+    (projection.status === 'survives-reset'
+      ? ` · ${t('quota_history.forecast_after_reset', { defaultValue: 'Projection ignores the scheduled quota reset.' })}`
+      : '') +
     (projection.provisional
       ? ` · ${t('quota_history.forecast_provisional', { defaultValue: 'Provisional' })}`
       : '');

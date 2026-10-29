@@ -91,7 +91,7 @@ for (const group of groups.values()) {
     const rates = {
       legacy: 'ratePpH' in old && old.status !== 'unstable' ? old.ratePpH : null,
       cycle: cycleRate(past, last),
-      proposed: 'ratePpH' in current && current.status !== 'unstable' ? current.ratePpH : null,
+      proposed: 'ratePpH' in current ? current.ratePpH : null,
     };
     eligibility.origins++;
     if (rates.legacy !== null) eligibility.legacy++;

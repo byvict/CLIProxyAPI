@@ -23,20 +23,21 @@ export interface ProjectionEvidence {
   provisional: boolean;
 }
 
+interface ExhaustionTiming {
+  exhaustsAtMs: number;
+  resetAtMs: number;
+  band: ProjectionBand;
+}
+
 export type QuotaProjection =
   | { status: 'insufficient' | 'stale' | 'reset-passed' }
   | { status: 'exhausted'; observedAtMs: number }
-  | (ProjectionEvidence & { status: 'no-consumption' | 'unstable' })
-  | (ProjectionEvidence & {
+  | (ProjectionEvidence & { status: 'no-consumption' })
+  | (ProjectionEvidence & ExhaustionTiming & {
       status: 'survives-reset';
       remainingAtReset: number;
     })
-  | (ProjectionEvidence & {
-      status: 'projected';
-      exhaustsAtMs: number;
-      resetAtMs: number;
-      band: ProjectionBand;
-    });
+  | (ProjectionEvidence & ExhaustionTiming & { status: 'projected' });
 
 export const MAX_SAMPLE_GAP_MS = 45 * 60 * 1000;
 
@@ -69,8 +70,8 @@ export function quotaProjection(
 
   const targetHours = Math.min(24, last.periodHours);
   let from = Math.max(now - targetHours * HOUR_MS, last.resetAtMs - last.periodHours * HOUR_MS);
-  // A replenishment or capacity adjustment starts a new rate segment. Missing
-  // readings leave gaps in that segment; they never count as idle time.
+  // Antigravity adjusts balances within a cycle. Exclude upward intervals
+  // without discarding earlier observed consumption in that same cycle.
   for (let index = samples.length - 1; index > 0; index -= 1) {
     const previous = samples[index - 1];
     const current = samples[index];
@@ -84,6 +85,7 @@ export function quotaProjection(
     )
       break;
     if (
+      last.provider !== 'antigravity' &&
       previous.remaining !== null &&
       current.remaining !== null &&
       current.remaining > previous.remaining
@@ -159,13 +161,19 @@ export function quotaProjection(
     recentCoveredMs >= 4.8 * HOUR_MS &&
     (recentRate < ratePpH / 2 || recentRate > ratePpH * 2)
   ) {
-    return { ...evidence, status: 'unstable' };
+    evidence.provisional = true;
   }
   const exhaustsAtMs = last.observedAtMs + (last.remaining / ratePpH) * HOUR_MS;
   if (!Number.isFinite(exhaustsAtMs)) return { status: 'insufficient' };
+  const timing: ExhaustionTiming = {
+    exhaustsAtMs,
+    resetAtMs: last.resetAtMs,
+    band: projectionBand(exhaustsAtMs - last.resetAtMs),
+  };
   if (exhaustsAtMs >= last.resetAtMs) {
     return {
       ...evidence,
+      ...timing,
       status: 'survives-reset',
       remainingAtReset: Math.max(
         0,
@@ -175,9 +183,7 @@ export function quotaProjection(
   }
   return {
     ...evidence,
+    ...timing,
     status: 'projected',
-    exhaustsAtMs,
-    resetAtMs: last.resetAtMs,
-    band: projectionBand(exhaustsAtMs - last.resetAtMs),
   };
 }

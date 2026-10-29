@@ -16,7 +16,7 @@ claude.seven_day_sonnet.resets_at = future(2);
 claude.iguana_necktie.resets_at = future(8);
 delete claude.additional_credit_balance;
 claude.cedar_ember = { eligible: false, grants: [] };
-const antigravity = { groups: [{ displayName: 'Gemini Models', description: 'Models within this group: Gemini Flash, Gemini Pro', buckets: [{ bucketId: 'gemini-5h', displayName: '5-hour limit', window: '5h', remainingFraction: 1, resetTime: future(0.2) }, { bucketId: 'gemini-weekly', displayName: 'Weekly limit', window: 'weekly', remainingFraction: 1, resetTime: future(6) }] }, { displayName: 'Claude and GPT Models', description: 'Models within this group: Claude Opus, Claude Sonnet, GPT-OSS', buckets: [{ bucketId: '3p-5h', displayName: '5-hour limit', window: '5h', remainingFraction: 0.96, resetTime: future(0.15) }, { bucketId: '3p-weekly', displayName: 'Weekly limit', window: 'weekly', remainingFraction: 0.98, resetTime: future(7) }] }] };
+const antigravity = { groups: [{ displayName: 'Gemini Models', description: 'Models within this group: Gemini Flash, Gemini Pro', buckets: [{ bucketId: 'gemini-5h', displayName: '5-hour limit', window: '5h', remainingFraction: 1, resetTime: future(0.2) }, { bucketId: 'gemini-weekly', displayName: 'Weekly limit', window: 'weekly', remainingFraction: 0.566, resetTime: future(6) }] }, { displayName: 'Claude and GPT Models', description: 'Models within this group: Claude Opus, Claude Sonnet, GPT-OSS', buckets: [{ bucketId: '3p-5h', displayName: '5-hour limit', window: '5h', remainingFraction: 0.96, resetTime: future(0.15) }, { bucketId: '3p-weekly', displayName: 'Weekly limit', window: 'weekly', remainingFraction: 0.566, resetTime: future(6.5) }] }] };
 const codex = { plan_type: 'pro', credits: { balance: '62500.0000000000', unlimited: false }, rate_limit: { allowed: true, secondary_window: { used_percent: 48, limit_window_seconds: 604800, reset_at: Math.floor((now + 5 * 86400000) / 1000) } } };
 const resets = { available_count: 2, credits: [1, 10].map((days, index) => ({ id: `fixture-${index}`, status: 'available', reset_type: 'codex_rate_limits', granted_at: new Date(now - 86400000).toISOString(), expires_at: future(days) })) };
 const grok = { currentPeriod: { type: 'USAGE_PERIOD_TYPE_WEEKLY', start: new Date(now - 86400000).toISOString(), end: future(6) }, billingPeriodEnd: future(6), creditUsagePercent: 6, monthlyLimit: { val: 0 }, used: { val: 0 }, onDemandCap: { val: 0 }, productUsage: [{ product: 'GrokBot', usagePercent: 5 }, { product: 'GrokBuild', usagePercent: 1 }] };
@@ -28,6 +28,13 @@ const history = (provider, windowId, hours, remaining, rate, resetDays) => Array
   resetAtMs: now + resetDays * 86400000, periodHours: 168,
 }));
 const observations = [
+  ...['gemini-models/gemini-weekly', 'claude-and-gpt-models/3p-weekly'].flatMap((windowId, pool) =>
+    [60, 59, 59.2, 58.2, 57.2, 57.4, 56.4, 56.6].map((remaining, i) => ({
+      credential: 'fixture-antigravity', provider: 'antigravity', windowId, label: 'Weekly',
+      observedAtMs: now - (7 - i) * 1_800_000, remaining,
+      resetAtMs: now + (pool === 0 ? 6 : 6.5) * 86_400_000, periodHours: 168,
+    }))
+  ),
   ...history('codex', 'weekly', 6, 52, 2, 5),
   ...history('claude', 'seven-day', 24, 84, 0.2, 2),
   ...history('xai', 'weekly', 24, 94, 0.1, 6).map(s => ({...s, remaining: s.observedAtMs >= now - 6 * 3600000 ? 94 : s.remaining})),
@@ -91,13 +98,13 @@ try {
     assert.equal(await cards.count(), 5);
     const cardMetrics = await cards.evaluateAll((nodes) => nodes.map((card) => ({ text: card.innerText, height: Math.round(card.getBoundingClientRect().height), bars: card.querySelectorAll('[class*="quotaBar_"]').length, overflow: card.scrollWidth > card.clientWidth })));
     const timeline = page.locator('section').filter({has: page.getByText('Quota windows', {exact: true})}).last();
-    const summary = timeline.locator('[data-projection-status="projected"]');
+    const summary = timeline.locator('[data-projection-status="projected"]').filter({ hasText: '25% coverage' });
     await summary.waitFor();
     assert((await summary.innerText()).includes('Provisional'));
-    assert.equal(await timeline.locator('[data-projection-status="survives-reset"]').count(), 1);
-    assert.equal(await timeline.locator('[data-projection-status="unstable"]').count(), 1);
-    assert.equal(await timeline.locator('[data-band]').count(), 1, 'Only exhaustion before reset has a marker');
-    assert.equal(await timeline.locator('[data-band][data-provisional]').count(), 1);
+    assert.equal(await timeline.locator('[data-projection-status="survives-reset"]').count(), 2);
+    assert.equal(await timeline.locator('[data-projection-status="unstable"]').count(), 0);
+    assert.equal(await timeline.locator('[data-band]').count(), 5, 'Claude, both Antigravity pools, Codex and xAI keep their exhaustion markers, including after reset');
+    assert.equal(await timeline.locator('[data-band][data-provisional]').count(), 4);
     await summary.locator('summary').focus();
     await page.keyboard.press('Enter');
     assert.equal(await summary.getAttribute('open'), '');
@@ -111,9 +118,9 @@ try {
     for (const mode of ['Weekly', '5-hour']) {
       await timeline.getByRole('button', {name: mode, exact: true}).click();
       const laneNames = await timeline.locator('[class*="laneName"]').allInnerTexts();
-      const agyLane = laneNames.indexOf('Antigravity (100%)');
+      const agyLane = laneNames.indexOf('Antigravity (57%)');
       assert(agyLane >= 0, `${mode} must keep the Antigravity Gemini lane`);
-      assert.equal(laneNames[agyLane + 1], 'Other (98%)', `${mode} must draw the Antigravity Claude & GPT pool right below Antigravity`);
+      assert.equal(laneNames[agyLane + 1], 'Other (57%)', `${mode} must draw the Antigravity Claude & GPT pool right below Antigravity`);
       const windows = await timeline.locator('[class*="_window_"]').evaluateAll((nodes) => nodes.map((bar) => ({
         text: bar.innerText.trim(), title: bar.title, width: bar.getBoundingClientRect().width,
         fill: bar.querySelector('[class*="_windowFill_"]')?.style.width ?? null,

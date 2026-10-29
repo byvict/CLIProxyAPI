@@ -1,5 +1,11 @@
 # Local releases
 
+## 8.0.44-local.21
+
+- Restore exhaustion markers for every estimated quota window, including dates after the scheduled reset. Keep estimates provisional when the recent pace changes instead of hiding their markers.
+- Anchor Claude's live and recorded timeline to the account-wide weekly quota instead of a model-specific window with an earlier reset.
+- Preserve Antigravity consumption evidence across balance increases within the same reset cycle, independently for Gemini and third-party pools.
+
 ## 8.0.44-local.20
 
 - Keep the definitive checkout in `~/Dev/CLIProxyAPI/codigo` and the delegation observatory's publication, data, control and work directories in `~/Dev/CLIProxyAPI/app`. The runtime's `delegation-observatory` is a directory instead of a link to the SSD, so the delegation page no longer needs the SSD mounted.

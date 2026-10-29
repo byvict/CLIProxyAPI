@@ -120,8 +120,11 @@ Set `PLAYWRIGHT_CHROMIUM_EXECUTABLE` to use an existing Chrome binary. The check
 intercepts all requests and does not use live credentials.
 
 The timeline estimates the remaining lifetime from the last 24 hours of the current
-quota cycle. Shorter quota windows use their own duration. A changed reset or an
-upward balance adjustment starts a new segment. Observed idle time counts; missing
+quota cycle. Shorter quota windows use their own duration. A changed reset starts
+a new cycle. An upward balance adjustment starts a new segment except for
+Antigravity, whose within-cycle adjustments leave earlier consumption evidence
+intact. Intervals with increasing balances are excluded from its rate. Observed
+idle time counts; missing
 intervals do not count as zero consumption. The base does not shrink as reset approaches.
 
 An estimate requires at least one observed hour and two valid intervals. The panel
@@ -132,16 +135,17 @@ it is distinct from the age of the cycle and is not a confidence score.
 
 The last six hours also provide a stability check. If they contain at least 4.8
 observed hours and their rate is less than half or more than twice the baseline
-rate, the panel reports a changing pace and suppresses the date. These thresholds
+rate, the panel marks the projection provisional and keeps the date. These thresholds
 are operational disclosure rules, not statistically calibrated confidence bounds.
 An absence of measured decline is labeled "no detectable drop in observed intervals".
 
 The summary expands with a click or keyboard to show the base, observed duration,
 coverage, decline, hourly rate, and reading age. Provisional markers are dashed.
 Dates are approximate, and the estimate assumes the observed pace continues.
-If the balance lasts until reset, the panel reports that outcome without drawing
-an exhaustion marker after renewal. Marker colors describe how far an exhaustion
-before reset falls from renewal, not the reliability of the prediction.
+If the balance lasts until reset, the panel keeps the exhaustion marker and labels
+it as a projection that ignores the scheduled reset. Marker colors describe the
+distance before or after renewal, not the reliability of the prediction. Claude
+uses the account-wide weekly quota rather than a model-specific weekly limit.
 
 Replay the legacy and proposed methods against recorded outcomes without writing
 to the database:
