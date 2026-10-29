@@ -227,9 +227,6 @@ fi
     }
     for name, command in commands.items():
         shortcut = runtime / name
-        backup = runtime / (name + '.before-launchd')
-        if shortcut.exists() and not backup.exists():
-            shutil.copy2(shortcut, backup)
         shortcut.write_text('#!/bin/sh\nset -eu\n' + command)
         shortcut.chmod(0o700)
 

@@ -11,7 +11,7 @@ port 8318 stays outside these service and deployment commands.
 2. Update `VERSION` and `CHANGELOG.local.md` for each delivered batch. Increment
    the local number in `8.0.44-local.N`. The first numbers identify the upstream baseline.
 3. Run the applicable tests and commit the change on its work branch.
-4. In `/Users/victorbaccega/CLIProxyAPI`, confirm that the working tree is clean.
+4. In `~/Dev/CLIProxyAPI/codigo`, confirm that the working tree is clean.
 5. Run `git fetch fork` and `git merge --ff-only fork/main` on `main`.
 6. Integrate the work branch with `git merge --ff-only <branch>`. If it has diverged,
    reconcile it with `fork/main` in the worktree first. Preserve other work.
@@ -24,13 +24,14 @@ reads. The upstream `dev` policy applies to the upstream repository.
 
 ## Runtime location
 
-The runtime is `~/Dev/CLIProxyAPI/app`, with configuration, credentials, databases, and
-releases. Deployment builds in `~/Dev/CLIProxyAPI/build`.
+The checkout is `~/Dev/CLIProxyAPI/codigo`. The runtime is `~/Dev/CLIProxyAPI/app`, with
+configuration, credentials, databases, and releases. Deployment builds in
+`~/Dev/CLIProxyAPI/build`.
 
-The delegation observatory keeps its data, control, and publication directories on the
-SSD under `/Volumes/Arquivos/cliproxyapi-original`. The runtime's `delegation-observatory`
-entry is a symbolic link to the published directory there. Without the SSD, only the
-delegation page is unavailable.
+The delegation observatory keeps its publication, data, control, and work directories in
+the runtime as `delegation-observatory`, `delegation-observatory-data`,
+`delegation-observatory-control`, and `delegation-observatory-work`. The proxy serves the
+delegation page from `delegation-observatory`.
 
 Install the stable launcher with Go in `PATH`:
 
@@ -58,7 +59,7 @@ in place. If its source needs an update, replace it explicitly and authorize it 
 ## Deploy the integrated version
 
 ```sh
-cd /Users/victorbaccega/CLIProxyAPI
+cd ~/Dev/CLIProxyAPI/codigo
 python3 -B scripts/macos-app.py deploy
 ```
 
@@ -88,14 +89,8 @@ Keep `management.disable-auto-update-panel: true` in the existing configuration.
 The launcher sets `MANAGEMENT_STATIC_PATH` to the selected release's panel.
 Deployment preserves configuration, credentials, and history databases.
 
-For the first installation, prepare and validate the release before stopping the
-legacy proxy with its existing `Parar.command`. Deploy the prepared release and
-check its health. If this first activation fails, use the preserved legacy startup
-command to restore service. Leave the monitor on port 8318 running as before.
-
 A successful deploy replaces the proxy's `Iniciar.command` and `Parar.command` with
-launchd commands. Their first versions remain in `.before-launchd` files.
-`Abrir-painel.command` keeps working.
+launchd commands. `Abrir-painel.command` keeps working.
 
 ## Check or control the service
 
@@ -119,8 +114,7 @@ Logs are `~/Library/Logs/CLIProxyAPI/launchd.stdout.log` and `launchd.stderr.log
 After installation, send `SIGTERM` to the LaunchAgent once. Confirm that launchd
 creates a new PID and that health still reports the expected commit.
 
-Keep the Mac powered on and awake and the user logged in. The delegation page also
-needs the SSD mounted. Locking the screen is supported. After a restart, unlock
+Keep the Mac powered on and awake and the user logged in. Locking the screen is supported. After a restart, unlock
 FileVault and log in; launchd then starts the service. A reboot is a separate
 acceptance check and stays unverified until performed.
 
