@@ -628,6 +628,72 @@ index 1e4d292..f6a6da5 100644
                title={title}
                role="img"
                aria-label={title.split('\n').join(', ')}
+diff --git a/src/features/quota/providers/antigravity/AntigravityQuotaBody.tsx b/src/features/quota/providers/antigravity/AntigravityQuotaBody.tsx
+index 638b43a..54bc162 100644
+--- a/src/features/quota/providers/antigravity/AntigravityQuotaBody.tsx
++++ b/src/features/quota/providers/antigravity/AntigravityQuotaBody.tsx
+@@ -1,5 +1,5 @@
+ /**
+- * Antigravity 额度渲染体：套餐 chip 行（ultra/ultra-lite=金卡）+ 分组水位条。
++ * Antigravity plan and optional model-group quota windows.
+  */
+ 
+ import { useEffect, useMemo, useState } from 'react';
+@@ -91,7 +91,11 @@ const getAntigravityPlanLabel = (
+   );
+ };
+ 
+-export function AntigravityQuotaBody({ quota, classes }: QuotaBodyProps<AntigravityQuotaState>) {
++export function AntigravityQuotaBody({
++  quota,
++  classes,
++  summary = false,
++}: QuotaBodyProps<AntigravityQuotaState>) {
+   const { t } = useTranslation();
+   const groups = quota.groups ?? [];
+   const planLabel = getAntigravityPlanLabel(quota.subscription, t);
+@@ -107,10 +111,11 @@ export function AntigravityQuotaBody({ quota, classes }: QuotaBodyProps<Antigrav
+       ),
+     [quota.groups]
+   );
+-  // 首屏直接显示准确文案；后续 effect 会在最近的分钟边界更新并重新排程。
++  // Render the server-corrected time immediately, then reschedule on minute boundaries.
+   const [nowMs, setNowMs] = useState(() => Date.now() + serverTimeOffsetMs);
+ 
+   useEffect(() => {
++    if (summary) return;
+     let timeoutId: ReturnType<typeof setTimeout> | undefined;
+ 
+     const updateCountdown = () => {
+@@ -126,7 +131,7 @@ export function AntigravityQuotaBody({ quota, classes }: QuotaBodyProps<Antigrav
+     return () => {
+       if (timeoutId !== undefined) clearTimeout(timeoutId);
+     };
+-  }, [resetTimestamps, serverTimeOffsetMs]);
++  }, [resetTimestamps, serverTimeOffsetMs, summary]);
+ 
+   // Ranked against this provider's own server-corrected clock rather than the
+   // shared one, so the final-hour warning and the countdown always agree.
+@@ -141,13 +146,17 @@ export function AntigravityQuotaBody({ quota, classes }: QuotaBodyProps<Antigrav
+         <div className={classes.codexPlan}>
+           <span className={classes.codexPlanItem}>
+             <span className={classes.codexPlanLabel}>{t('antigravity_quota.plan_label')}</span>
+-            <span className={isPremiumPlan ? classes.premiumPlanValue : classes.codexPlanValue}>
++            <span
++              className={
++                !summary && isPremiumPlan ? classes.premiumPlanValue : classes.codexPlanValue
++              }
++            >
+               {planLabel}
+             </span>
+           </span>
+         </div>
+       )}
+-      {groups.length === 0 ? (
++      {summary ? null : groups.length === 0 ? (
+         <div className={classes.quotaMessage}>{t('antigravity_quota.empty_models')}</div>
+       ) : (
+         groups.map((group) => {
 diff --git a/src/features/quota/providers/claude/ClaudeQuotaBody.tsx b/src/features/quota/providers/claude/ClaudeQuotaBody.tsx
 index d4be98a..3ddc079 100644
 --- a/src/features/quota/providers/claude/ClaudeQuotaBody.tsx
@@ -819,7 +885,7 @@ index 6f2dabd..2b0e186 100644
          const resetDisplay = buildResetDisplay(
            null,
 diff --git a/src/features/quota/providers/xai/XaiQuotaBody.tsx b/src/features/quota/providers/xai/XaiQuotaBody.tsx
-index 7f990f1..05ea556 100644
+index 7f990f1..d65b6b8 100644
 --- a/src/features/quota/providers/xai/XaiQuotaBody.tsx
 +++ b/src/features/quota/providers/xai/XaiQuotaBody.tsx
 @@ -1,6 +1,5 @@
@@ -828,18 +894,52 @@ index 7f990f1..05ea556 100644
 - * 周/月账单水位条、按量付费余额。
 + * xAI plan, product usage, balances, and optional weekly/monthly quota windows.
   */
-
+ 
  import { useMemo } from 'react';
 @@ -72,7 +71,7 @@ const resolveXaiPlan = (
    return null;
  };
-
+ 
 -export function XaiQuotaBody({ quota, classes }: QuotaBodyProps<XaiQuotaState>) {
 +export function XaiQuotaBody({ quota, classes, summary = false }: QuotaBodyProps<XaiQuotaState>) {
    const { t, i18n } = useTranslation();
    // Ahead of the early return below — hooks cannot be conditional.
    const now = useNow();
-@@ -205,7 +204,7 @@ export function XaiQuotaBody({ quota, classes }: QuotaBodyProps<XaiQuotaState>)
+@@ -96,9 +95,11 @@ export function XaiQuotaBody({ quota, classes }: QuotaBodyProps<XaiQuotaState>)
+           <span className={classes.codexPlanLabel}>{t('xai_quota.plan_label')}</span>
+           <span
+             className={
+-              billing.planLabel
+-                ? planValueClass(billing.planTier, classes)
+-                : classes.premiumPlanValue
++              summary
++                ? classes.codexPlanValue
++                : billing.planLabel
++                  ? planValueClass(billing.planTier, classes)
++                  : classes.premiumPlanValue
+             }
+           >
+             {billing.planLabel ?? t('xai_quota.plan_paid')}
+@@ -156,11 +157,13 @@ export function XaiQuotaBody({ quota, classes }: QuotaBodyProps<XaiQuotaState>)
+     !(hasWeeklyData && billing.monthlyLimitCents === 0 && billing.usedCents === 0);
+ 
+   const subscriptionLabel = billing.planLabel ?? (plan ? t(`xai_quota.${plan.labelKey}`) : null);
+-  const subscriptionClass = billing.planLabel
+-    ? planValueClass(billing.planTier, classes)
+-    : plan?.premium
+-      ? classes.premiumPlanValue
+-      : classes.codexPlanValue;
++  const subscriptionClass = summary
++    ? classes.codexPlanValue
++    : billing.planLabel
++      ? planValueClass(billing.planTier, classes)
++      : plan?.premium
++        ? classes.premiumPlanValue
++        : classes.codexPlanValue;
+   const headerReset = buildResetDisplay(
+     null,
+     hasWeeklyData ? billing.resetAtMs : parseIsoToMs(billing.billingPeriodEnd),
+@@ -205,7 +208,7 @@ export function XaiQuotaBody({ quota, classes }: QuotaBodyProps<XaiQuotaState>)
            </span>
          </div>
        )}
@@ -848,7 +948,7 @@ index 7f990f1..05ea556 100644
          <div
            className={classes.quotaRow}
            title={weeklySoon ? t('quota_management.soonest_row_hint') : undefined}
-@@ -229,20 +228,25 @@ export function XaiQuotaBody({ quota, classes }: QuotaBodyProps<XaiQuotaState>)
+@@ -229,20 +232,25 @@ export function XaiQuotaBody({ quota, classes }: QuotaBodyProps<XaiQuotaState>)
          </div>
        )}
        {billing.productUsage.length > 0 && (
@@ -883,7 +983,7 @@ index 7f990f1..05ea556 100644
          <div className={classes.quotaRow}>
            <div className={classes.quotaRowHeader}>
              <span className={classes.quotaModel}>{t('xai_quota.pay_as_you_go_label')}</span>
-@@ -254,7 +258,7 @@ export function XaiQuotaBody({ quota, classes }: QuotaBodyProps<XaiQuotaState>)
+@@ -254,7 +262,7 @@ export function XaiQuotaBody({ quota, classes }: QuotaBodyProps<XaiQuotaState>)
            <QuotaMeter percent={onDemandRemaining} classes={classes} index={1} />
          </div>
        )}

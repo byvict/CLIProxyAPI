@@ -3,6 +3,7 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { I18nextProvider } from 'react-i18next';
 import i18n from '@/i18n';
+import { AntigravityQuotaBody } from '@/features/quota/providers/antigravity/AntigravityQuotaBody';
 import { ClaudeQuotaBody } from '@/features/quota/providers/claude/ClaudeQuotaBody';
 import { CodexQuotaBody } from '@/features/quota/providers/codex/CodexQuotaBody';
 import { MetaQuotaBody } from '@/features/quota/providers/meta/MetaQuotaBody';
@@ -10,7 +11,13 @@ import { XaiQuotaBody } from '@/features/quota/providers/xai/XaiQuotaBody';
 import { QUOTA_CLASS_KEYS, bindQuotaClasses } from '@/features/quota/types';
 import { normalizeClaudeUsageSnapshot } from '@/services/api/claudeUsage';
 import { buildXaiBillingSummary } from '@/utils/quota';
-import type { ClaudeQuotaState, CodexQuotaState, MetaQuotaState, XaiQuotaState } from '@/types';
+import type {
+  AntigravityQuotaState,
+  ClaudeQuotaState,
+  CodexQuotaState,
+  MetaQuotaState,
+  XaiQuotaState,
+} from '@/types';
 import claudeUsage from './fixtures/claude-oauth-usage.json';
 
 const classes = bindQuotaClasses(
@@ -22,6 +29,36 @@ const render = (body: ReturnType<typeof createElement>) =>
   renderToStaticMarkup(createElement(I18nextProvider, { i18n: translations }, body));
 
 describe('quota card summaries', () => {
+  test('Antigravity renders a plain plan without model groups or quota windows', () => {
+    const quota: AntigravityQuotaState = {
+      status: 'success',
+      subscription: { plan: 'ultra', tierId: 'g1-ultra-tier', tierName: 'Ultra' },
+      serverTimeOffsetMs: 0,
+      groups: [
+        {
+          id: 'gemini-models',
+          label: 'Gemini Models',
+          description: 'Models within this group: Gemini Flash, Gemini Pro',
+          buckets: [
+            {
+              id: 'gemini-5h',
+              label: '5-hour limit',
+              window: '5h',
+              remainingFraction: 1,
+              resetTime: '2026-10-29T00:00:00Z',
+            },
+          ],
+        },
+      ],
+    };
+    const markup = render(createElement(AntigravityQuotaBody, { quota, classes, summary: true }));
+    expect(markup).toContain('<span class="codexPlanValue">Ultra</span>');
+    expect(markup).not.toContain('premiumPlanValue');
+    expect(markup).not.toContain('Gemini Models');
+    expect(markup).not.toContain('5-hour limit');
+    expect(markup).not.toContain('quotaBar');
+  });
+
   test('Claude keeps plan and dollar balances without extra usage or quota windows', () => {
     const snapshot = normalizeClaudeUsageSnapshot(claudeUsage)!;
     const quota: ClaudeQuotaState = {
@@ -63,25 +100,31 @@ describe('quota card summaries', () => {
     expect(markup).not.toContain('quotaBar');
   });
 
-  test('Grok separates the breakdown title, labels and values without quota windows', () => {
+  test('Grok renders a plain plan and separates the breakdown title, labels and values without quota windows', () => {
+    const billing = buildXaiBillingSummary({
+      currentPeriod: { type: 'USAGE_PERIOD_TYPE_WEEKLY' },
+      creditUsagePercent: 6,
+      productUsage: [
+        { product: 'GrokBot', usagePercent: 5 },
+        { product: 'GrokBuild', usagePercent: 1 },
+      ],
+    })!;
+    billing.planLabel = 'SuperGrok Heavy';
+    billing.planTier = 'elite';
     const quota: XaiQuotaState = {
       status: 'success',
-      billing: buildXaiBillingSummary({
-        currentPeriod: { type: 'USAGE_PERIOD_TYPE_WEEKLY' },
-        creditUsagePercent: 6,
-        productUsage: [
-          { product: 'GrokBot', usagePercent: 5 },
-          { product: 'GrokBuild', usagePercent: 1 },
-        ],
-      }),
+      billing,
     };
     const markup = render(createElement(XaiQuotaBody, { quota, classes, summary: true }));
+    expect(markup).toContain('<span class="codexPlanValue">SuperGrok Heavy</span>');
     expect(markup).toContain(
       '<div class="codexResetCreditsTitle">Usage breakdown (shared quota)</div>'
     );
     expect(markup).toContain('<span class="codexPlanLabel">GrokBot usage</span>');
     expect(markup).toContain('<span class="codexPlanValue">5%</span>');
     expect(markup).toContain('<span class="codexPlanValue">1%</span>');
+    expect(markup).not.toContain('elitePlanValue');
+    expect(markup).not.toContain('premiumPlanValue');
     expect(markup).not.toContain('Weekly limit');
     expect(markup).not.toContain('quotaBar');
   });

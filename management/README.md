@@ -65,7 +65,7 @@ It produces the original single-file `management.html` deployment artifact.
 Keep `management.disable-auto-update-panel: true` when installing this artifact,
 so upstream automatic updates do not replace the fork.
 
-The committed patch includes the compact summaries for all four native providers,
+The committed patch includes the compact summaries for all five native providers,
 the shared dashed current-time line, provider logos and weekly balances, and the
 Codex reset-credit triangles. Build from these committed inputs. A previously
 installed HTML file can contain local changes that were never added to the patch.
@@ -78,7 +78,7 @@ PLAYWRIGHT_MODULE=/absolute/playwright/index.mjs node scripts/compact-quota-ui-c
 ```
 
 This checker intercepts every browser request and loads the build's `dist/index.html`.
-It checks all four cards on desktop and mobile without using live credentials.
+It checks all five cards on desktop and mobile without using live credentials.
 The compact-card unit tests also run in every `scripts/build-management.sh` build.
 
 Build and run the proxy from this branch to provide the authenticated
