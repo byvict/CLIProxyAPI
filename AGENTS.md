@@ -5,6 +5,12 @@ Go 1.26+ proxy server providing OpenAI/Gemini/Claude/Codex compatible APIs with 
 ## Repository
 - GitHub: https://github.com/router-for-me/CLIProxyAPI
 
+## Web panel ownership
+
+- The web management panel is a separate repository, `router-for-me/Cli-Proxy-API-Management-Center` by default. `remote-management.panel-github-repository` selects its release source; `internal/managementasset/` downloads the generated `management.html` artifact.
+- For web UI tasks, locate the corresponding panel source checkout using the local workspace map or project configuration. Read that checkout's `AGENTS.md`. A backend worktree does not contain or isolate the panel source.
+- Before proposing changes to an existing UI, identify its source component, styles, and data source. A request to approve a design before coding still permits read-only inspection. If a backend search has no UI matches, resolve the separate frontend checkout before declaring the source unavailable.
+
 ## Commands
 ```bash
 gofmt -w . # Format (required after Go changes)
