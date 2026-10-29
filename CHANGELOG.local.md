@@ -1,5 +1,9 @@
 # Local releases
 
+## 8.0.44-local.14
+
+- Run the service from `~/Library/Application Support/CLIProxyAPI` on the internal disk. The delegation observatory keeps its data on the SSD and the runtime links to its publication.
+
 ## 8.0.44-local.13
 
 - Draw the Antigravity Claude & GPT quota pool as an `Other` timeline lane directly below the Antigravity (Gemini) lane, with its own weekly balance, window, recorded readings and forecast.

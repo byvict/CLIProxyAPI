@@ -2,7 +2,7 @@
 
 Python 3.9+ standard library only, on macOS or Linux (`fcntl`). This pipeline reads real persisted T3 dispatch metadata and imports separately audited judgments. It never executes agent work, reads authentication tables, or infers acceptance/application from result text. `extract.py` and `metrics.py` retain the verified collection's extraction and aggregation rules; `curate.py` is deliberately not a generic auditor.
 
-Run from the repository root. Set `OBSERVATORY_DATA_DIR` to the persistent private data directory on the external SSD, `OBSERVATORY_SEED_DIR` to the preserved verified collection, and `CLIPROXY_CONFIG_DIR` to the directory containing the proxy configuration. All directory paths must be canonical, with no symlink components. The data and publication parent directories must already exist. The SSD must already be mounted; do not create a replacement mount or an internal-disk fallback.
+Run from the repository root. Set `OBSERVATORY_DATA_DIR` to the persistent private data directory on the external SSD, `OBSERVATORY_SEED_DIR` to the preserved verified collection, and `OBSERVATORY_PUBLISH_DIR` to `/Volumes/Arquivos/cliproxyapi-original/delegation-observatory`. The proxy runtime links its `delegation-observatory` entry to that SSD directory. All directory paths must be canonical, with no symlink components. The data and publication parent directories must already exist. The SSD must already be mounted; do not create a replacement mount or an internal-disk fallback.
 
 ```sh
 PIPELINE="$PWD/scripts/delegation-observatory/pipeline.py"
@@ -11,7 +11,7 @@ python3 "$PIPELINE" --data-dir "$OBSERVATORY_DATA_DIR" seed \
 python3 "$PIPELINE" --data-dir "$OBSERVATORY_DATA_DIR" aggregate
 python3 "$PIPELINE" --data-dir "$OBSERVATORY_DATA_DIR" validate
 python3 "$PIPELINE" --data-dir "$OBSERVATORY_DATA_DIR" publish \
-  --publish-dir "$CLIPROXY_CONFIG_DIR/delegation-observatory"
+  --publish-dir "$OBSERVATORY_PUBLISH_DIR"
 ```
 
 `seed` copies allowlisted factual and judgment files byte for byte, verifies referenced private evidence files against their hashes, and records a hashed manifest. Original evidence remains in its original location. Raw reports/transcripts are not recopied. Reimporting the identical seed is a no-op; changed judgments use `import-judgments`. The initial unrevisioned sparse dispatch annotations are combined only where fields agree, with evidence IDs unioned; conflicts fail. Original bytes remain preserved. The legacy `reported_findings` field is private, unused, and never exported: its original collection sometimes counted object keys instead of findings.
@@ -59,7 +59,7 @@ Attach these steps to the existing T3 routine at **09:00 America/Sao_Paulo**. Sc
 
 `aggregate` reads preserved files only and creates `export/<24-lowercase-hex-id>/dashboard.json` plus a generation-local `publication.json`. `latest-generation.json` selects the locally validated generation. It does not publish to the proxy. Identical inputs reproduce identical bytes and IDs; existing generation files are never overwritten with different bytes.
 
-`publish --publish-dir <config-dir>/delegation-observatory` validates schema, content-derived generation ID, summary recomputation, record/evidence references, exact path, and file SHA256. It copies/verifies the immutable dashboard before atomically replacing the served `publication.json` last. `--generation <id>` selects an explicit preserved generation. Symlinks, traversal, malformed IDs, invalid schema/digests and private export fields are refused. No service is changed or restarted.
+`publish --publish-dir <publication-dir>` validates schema, content-derived generation ID, summary recomputation, record/evidence references, exact path, and file SHA256. It copies/verifies the immutable dashboard before atomically replacing the served `publication.json` last. `--generation <id>` selects an explicit preserved generation. Symlinks, traversal, malformed IDs, invalid schema/digests and private export fields are refused. No service is changed or restarted.
 
 The envelope keeps `schema_version: "t3-observatory/1.0"`, original dispatch/contribution/panel metrics, exact `window`, source/disposition timestamps, sanitized `source_snapshot`, historical `source_snapshots` and `disposition_snapshots`, and sanitized evidence. `attribution_coverage` exports **every inspected dispatch**, including no-finding reports, with `dispatch_id`, `revision`, `evaluable`, `evidence_ids`, disposition time and optional role/panel. Its `application_not_applicable` and `application_unknown` booleans reproduce the original dispatch-rate exclusions. Verification-artifact-only contributions are application-not-applicable; accepted corrective contributions without inspected application remain unknown. Remaining audited no-accepted dispatches stay in the defined rate denominators. Filtered consumers must join coverage by dispatch ID and retain these exclusions. Contribution counts are separate from dispatch rates. Unknown usage remains null; no cost or causal family ranking is inferred.
 
