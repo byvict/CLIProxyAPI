@@ -91,9 +91,22 @@ func (s *proxyTestCodexOAuthService) CreateTokenStorage(bundle *codex.CodexAuthB
 	}
 }
 
+// newTestHTTPServer ignores root-path requests. Local processes that scan loopback
+// ports send them, and counting them as test traffic fails the no-fallback checks.
+// Every request made by these tests uses a named path.
+func newTestHTTPServer(handler http.Handler) *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" {
+			http.NotFound(w, r)
+			return
+		}
+		handler.ServeHTTP(w, r)
+	}))
+}
+
 func startForwardHTTPProxy(t *testing.T, hits *atomic.Int32, expectedProxyAuth string, dropBody bool) *httptest.Server {
 	t.Helper()
-	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return newTestHTTPServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hits.Add(1)
 		if expectedProxyAuth != "" {
 			if r.Header.Get("Proxy-Authorization") != expectedProxyAuth {
@@ -161,7 +174,7 @@ func TestStartOAuthV8SessionScopedProxyAndPersistence(t *testing.T) {
 	proxyServer := startForwardHTTPProxy(t, &proxyHits, "", false)
 	defer proxyServer.Close()
 
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	upstream := newTestHTTPServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("X-Via-Session-Proxy") != "1" {
 			directHits.Add(1)
 		}
@@ -322,7 +335,7 @@ func TestStartOAuthV8ProxyFailuresDoNotFallbackDirectAndRedactCredentials(t *tes
 	gin.SetMode(gin.TestMode)
 
 	var directHits atomic.Int32
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	upstream := newTestHTTPServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("X-Via-Session-Proxy") != "1" {
 			directHits.Add(1)
 		}
@@ -431,7 +444,7 @@ func TestStartOAuthV8ParallelSessionsWithDifferentProxiesOutOfOrderCallbacks(t *
 	proxyB := startForwardHTTPProxy(t, &hitsB, "", false)
 	defer proxyB.Close()
 
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	upstream := newTestHTTPServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("X-Via-Session-Proxy") != "1" {
 			directHits.Add(1)
 		}
@@ -606,7 +619,7 @@ func TestStartOAuthV8AntigravityAndPluginSessionProxyAndRestartPersistence(t *te
 	proxyServer := startForwardHTTPProxy(t, &proxyHits, "", false)
 	defer proxyServer.Close()
 
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	upstream := newTestHTTPServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("X-Via-Session-Proxy") != "1" {
 			directHits.Add(1)
 		}
@@ -799,7 +812,7 @@ func TestStartOAuthV8AntigravityProjectDiscoveryProxyFailureFailsSession(t *test
 	gin.SetMode(gin.TestMode)
 
 	var proxyHits, directHits atomic.Int32
-	proxyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	proxyServer := newTestHTTPServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		proxyHits.Add(1)
 		if strings.HasSuffix(r.RequestURI, "/project") {
 			if hj, ok := w.(http.Hijacker); ok {
@@ -835,7 +848,7 @@ func TestStartOAuthV8AntigravityProjectDiscoveryProxyFailureFailsSession(t *test
 	}))
 	defer proxyServer.Close()
 
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	upstream := newTestHTTPServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("X-Via-Session-Proxy") != "1" {
 			directHits.Add(1)
 		}
@@ -911,7 +924,7 @@ func TestStartOAuthV8PluginPollCancelRaceDoesNotDropProxyOrSaveCancelledSession(
 	proxyServer := startForwardHTTPProxy(t, &proxyHits, "", false)
 	defer proxyServer.Close()
 
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	upstream := newTestHTTPServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("X-Via-Session-Proxy") != "1" {
 			directHits.Add(1)
 		}
@@ -1155,7 +1168,7 @@ func TestStartOAuthV8WithoutProxyPreservesDefaultBehaviorAndPersistedProxyRefres
 	proxyServer := startForwardHTTPProxy(t, &proxyHits, "", false)
 	defer proxyServer.Close()
 
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	upstream := newTestHTTPServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("X-Via-Session-Proxy") != "1" {
 			directHits.Add(1)
 		}
