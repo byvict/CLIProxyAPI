@@ -10,12 +10,14 @@ import math
 import os
 import sqlite3
 import subprocess
+import sys
 from collections import Counter
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 PROVIDERS = {"claudeAgent": "claude", "claude": "claude", "codex": "codex",
              "grok": "grok", "muse": "meta", "meta": "meta"}
+BACKUPS_KEPT = 3
 SCHEMA = """CREATE TABLE IF NOT EXISTS usage_events (
  id TEXT PRIMARY KEY, provider TEXT NOT NULL, session_id TEXT NOT NULL,
  at_ms INTEGER NOT NULL, input_tokens INTEGER NOT NULL, output_tokens INTEGER NOT NULL,
@@ -60,10 +62,45 @@ def digest(*parts):
     return hashlib.sha256(json.dumps(parts, separators=(",", ":")).encode()).hexdigest()
 
 
+def read_t3(path):
+    """Return the parsed executions of one T3 database and its turns without identity."""
+    executions, without_identity = [], 0
+    with contextlib.closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)) as source:
+        source.execute("BEGIN")
+        tables = {r[0] for r in source.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        if "orchestration_v2_projection_provider_turns" in tables:
+            rows = source.execute("""SELECT t.provider_turn_id,p.provider,t.started_at,t.completed_at,
+                json_extract(p.payload_json,'$.nativeThreadRef.nativeId'),
+                json_extract(t.payload_json,'$.turnTokenUsage')
+                FROM orchestration_v2_projection_provider_turns t
+                JOIN orchestration_v2_projection_provider_threads p
+                ON p.provider_thread_id=t.provider_thread_id AND p.thread_id=t.thread_id""").fetchall()
+            for key, provider, start, end, session, usage in rows:
+                u = json.loads(usage) if usage else {}
+                valid = u.get("usageScope") == "main_agent" and u.get("usageStatus") in ("partial", "complete") and count(u.get("inputTokens")) and count(u.get("outputTokens"))
+                executions.append((key, provider, session or key, timestamp(start), timestamp(end), "t3:v2",
+                                   u["inputTokens"] if valid else None, u["outputTokens"] if valid else None,
+                                   int(u.get("usageStatus") == "partial")))
+        elif "projection_turns" in tables:
+            rows = source.execute("""SELECT t.thread_id,t.turn_id,t.row_id,s.provider_name,
+                t.started_at,t.completed_at,r.resume_cursor_json FROM projection_turns t
+                JOIN projection_thread_sessions s ON s.thread_id=t.thread_id
+                LEFT JOIN provider_session_runtime r ON r.thread_id=t.thread_id""").fetchall()
+            for thread, turn, row, provider, start, end, cursor in rows:
+                session = json.loads(cursor).get("sessionId") if cursor else None
+                if not session:
+                    without_identity += 1
+                    continue
+                executions.append((f"t3:v1:{thread}:{turn or row}", provider, session,
+                                   timestamp(start), timestamp(end), "t3:v1"))
+    return executions, without_identity
+
+
 class Importer:
     def __init__(self, db):
         self.db = db
         self.stats = Counter()
+        self.skipped = []
 
     def usage(self, provider, session, at, inp, out, key, source):
         if provider not in PROVIDERS or not session or at is None or not count(inp) or not count(out):
@@ -103,34 +140,20 @@ class Importer:
                            sum(row[3:6]), row[6], row[8], str(path))
 
     def t3(self, path):
-        with contextlib.closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)) as source:
-            source.execute("BEGIN")
-            tables = {r[0] for r in source.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-            if "orchestration_v2_projection_provider_turns" in tables:
-                rows = source.execute("""SELECT t.provider_turn_id,p.provider,t.started_at,t.completed_at,
-                    json_extract(p.payload_json,'$.nativeThreadRef.nativeId'),
-                    json_extract(t.payload_json,'$.turnTokenUsage')
-                    FROM orchestration_v2_projection_provider_turns t
-                    JOIN orchestration_v2_projection_provider_threads p
-                    ON p.provider_thread_id=t.provider_thread_id AND p.thread_id=t.thread_id""")
-                for key, provider, start, end, session, usage in rows:
-                    u = json.loads(usage) if usage else {}
-                    valid = u.get("usageScope") == "main_agent" and u.get("usageStatus") in ("partial", "complete") and count(u.get("inputTokens")) and count(u.get("outputTokens"))
-                    self.execution(key, provider, session or key, timestamp(start), timestamp(end), "t3:v2",
-                                   u["inputTokens"] if valid else None, u["outputTokens"] if valid else None,
-                                   int(u.get("usageStatus") == "partial"))
-            elif "projection_turns" in tables:
-                rows = source.execute("""SELECT t.thread_id,t.turn_id,t.row_id,s.provider_name,
-                    t.started_at,t.completed_at,r.resume_cursor_json FROM projection_turns t
-                    JOIN projection_thread_sessions s ON s.thread_id=t.thread_id
-                    LEFT JOIN provider_session_runtime r ON r.thread_id=t.thread_id""")
-                for thread, turn, row, provider, start, end, cursor in rows:
-                    session = json.loads(cursor).get("sessionId") if cursor else None
-                    if not session:
-                        self.stats["legacyExecutionsWithoutIdentity"] += 1
-                        continue
-                    self.execution(f"t3:v1:{thread}:{turn or row}", provider, session,
-                                   timestamp(start), timestamp(end), "t3:v1")
+        try:
+            executions, without_identity = read_t3(path)
+        except Exception as error:
+            # T3's database belongs to another program. One that cannot be opened or parsed must
+            # not stop the other sources, and nothing from it is written. macOS's SQLite cannot
+            # open a WAL database read-only after its writer removed -wal and -shm; T3 is closed
+            # then, so a later run imports the same turns.
+            print(f"Skipped {path}: {error}", file=sys.stderr, flush=True)
+            self.skipped.append({"source": str(path), "error": str(error)})
+            return
+        if without_identity:
+            self.stats["legacyExecutionsWithoutIdentity"] += without_identity
+        for execution in executions:
+            self.execution(*execution)
 
     def transcript(self, path, provider):
         stat = path.stat()
@@ -280,6 +303,25 @@ class Importer:
         self.usage("codex", state["session"], at, last.get("input_tokens"), last.get("output_tokens"), None, str(path))
 
 
+def daily_backup(db, destination):
+    """Copy a non-empty history before the first import of each São Paulo day.
+    Older 14-digit per-run copies fall outside the retention pattern."""
+    path = destination.with_suffix(dt.datetime.now(ZoneInfo("America/Sao_Paulo")).strftime(".before-%Y%m%d.sqlite"))
+    if path.exists():
+        return path
+    if not destination.stat().st_size:
+        return None
+    # An interrupted copy must not count as the day's backup.
+    partial = path.with_name(path.name + ".partial")
+    partial.unlink(missing_ok=True)
+    with contextlib.closing(sqlite3.connect(partial)) as copy:
+        db.backup(copy)
+    partial.replace(path)
+    for old in sorted(destination.parent.glob(destination.stem + ".before-" + "[0-9]" * 8 + ".sqlite"))[:-BACKUPS_KEPT]:
+        old.unlink()
+    return path
+
+
 def run(args):
     os.umask(0o077)
     destination = args.destination.resolve()
@@ -288,10 +330,10 @@ def run(args):
     backup = None
     with contextlib.closing(sqlite3.connect(":memory:" if args.dry_run else destination)) as db:
         db.execute("PRAGMA busy_timeout=5000")
-        if not args.dry_run and destination.stat().st_size:
-            backup = destination.with_suffix(".before-" + dt.datetime.now().strftime("%Y%m%d%H%M%S") + ".sqlite")
-            with contextlib.closing(sqlite3.connect(backup)) as copy:
-                db.backup(copy)
+        if not args.dry_run:
+            backup = daily_backup(db, destination)
+            # The proxy keeps reading committed rows while an import transaction is open.
+            db.execute("PRAGMA journal_mode=WAL")
         db.executescript(SCHEMA)
         importer = Importer(db)
         before = db.execute("SELECT count(*) FROM usage_events").fetchone()[0]
@@ -324,7 +366,7 @@ def run(args):
         result = {"dryRun": args.dry_run, "database": str(destination), "backup": str(backup) if backup else None,
                   "newUsageEvents": db.execute("SELECT count(*) FROM usage_events").fetchone()[0] - before,
                   "coverage": coverage, "executionsBySource": dict(db.execute("SELECT source,count(*) FROM executions GROUP BY source")),
-                  "stats": dict(importer.stats), "integrity": db.execute("PRAGMA quick_check").fetchone()[0]}
+                  "skippedSources": importer.skipped, "stats": dict(importer.stats), "integrity": db.execute("PRAGMA quick_check").fetchone()[0]}
         if args.receipt:
             args.receipt.write_text(json.dumps(result, indent=2) + "\n")
         print(json.dumps(result, indent=2))

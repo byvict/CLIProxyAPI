@@ -64,18 +64,20 @@ python3 -B scripts/macos-app.py deploy
 
 The command uses the existing Go toolchain recorded in
 `~/Dev/CLIProxyAPI/build/toolchain-bin-path.txt` and the installed Bun 1.4.3.
-On another Mac, make Go, Bun 1.4.3, Git, and Python 3.9 or newer available in `PATH`.
+On another Mac, make Go, Bun 1.4.3, Git, Python 3.9 or newer, and `zstd` available in `PATH`.
 
 Deployment requires a clean `main` matching the pushed `fork/main`. It runs the
-macOS deployment tests and `go test ./...`, checks Go formatting, builds the proxy
-with version and commit metadata, and builds the pinned management panel. The panel
-build runs its tests, type checks, lint, and production build. A source change during
-the build aborts activation.
+`scripts/test_*.py` tests, including the history importer's, and `go test ./...`,
+checks Go formatting, builds the proxy with version and commit metadata, and builds
+the pinned management panel. The panel build runs its tests, type checks, lint, and
+production build. A source change during the build aborts activation.
 
-Each release contains `cli-proxy-api`, `management.html`, and a `release.json` with
-SHA-256 checksums under `~/Dev/CLIProxyAPI/app/releases/`. The
-`current` link selects the release. Redeployment checks artifacts against their
-manifest. A different commit requires a different `VERSION`.
+Each release contains `cli-proxy-api`, `management.html`,
+`import-performance-history.py`, and a `release.json` with SHA-256 checksums under
+`~/Dev/CLIProxyAPI/app/releases/`. The `current` link selects the
+release. Redeployment checks artifacts against their manifest, which lists only that
+release's files, so releases built before the importer became an artifact remain valid
+for rollback. A different commit requires a different `VERSION`.
 
 Deployment restarts `com.byvict.cliproxyapi`, waits for `/healthz` on port 8317 to
 return the release's version and full commit, and verifies the served panel's SHA-256.
@@ -105,9 +107,10 @@ python3 -B scripts/macos-app.py start
 python3 -B scripts/macos-app.py uninstall
 ```
 
-`stop` unloads the proxy job for the current login. `start` loads it again and checks
-release health. `uninstall` also removes its plist and preserves runtime data.
-`rollback` switches to the previous managed release.
+`stop` unloads the proxy and history import jobs for the current login. `start` loads
+them again and checks release health. `uninstall` also removes both plists and preserves
+runtime data. `rollback` switches to the previous managed release. `status` prints the
+state and last exit code of both jobs.
 
 Open <http://127.0.0.1:8317/management.html>. The LaunchAgent plist is
 `~/Library/LaunchAgents/com.byvict.cliproxyapi.plist`. It uses `RunAtLoad` and `KeepAlive`.
@@ -123,3 +126,29 @@ acceptance check and stays unverified until performed.
 
 The main panel's quota collection still requires an open panel. This installation
 does not change collection schedules, session lifetimes, or provider authentication.
+
+## Performance history import
+
+The LaunchAgent `com.byvict.cliproxyapi.performance-import` keeps
+`performance-history.sqlite` current for the Performance page. It runs
+`/usr/bin/python3 -B <runtime>/current/import-performance-history.py` at load and
+every 15 minutes, so a deploy or rollback also switches the importer. launchd does not
+start a run while the previous one is still running. The job's `PATH` includes
+`/opt/homebrew/bin` for `zstd`.
+
+Deployment installs the job after the proxy passes its health and panel checks. Its
+plist is `~/Library/LaunchAgents/com.byvict.cliproxyapi.performance-import.plist`.
+`Parar.command` stops only the proxy; scheduled imports continue and only add rows.
+
+Each run writes its receipt to `~/Library/Logs/CLIProxyAPI/performance-import.json`,
+with new token events and coverage per provider. Errors go to
+`performance-import.stderr.log` in the same directory. A failed run commits no rows,
+and the next interval retries. After a rollback to a release without the importer, the
+job fails on the missing file and changes nothing.
+
+The history uses SQLite WAL mode, so the proxy keeps reading committed rows while an
+import writes. A manual run of the same command waits up to 5 seconds for a running
+import, then fails with `database is locked` and changes nothing. Before the first
+import of each São Paulo day, the importer copies the history to
+`performance-history.before-YYYYmmdd.sqlite` and keeps the newest three dated copies.
+Copies named `.before-YYYYmmddHHMMSS.sqlite` from earlier manual runs are not touched.

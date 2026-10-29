@@ -231,9 +231,13 @@ Run `python3 scripts/import-performance-history.py --destination /absolute/confi
 Use `--dry-run` to preview the import in memory. The importer reads T3 v1 and v2
 projections, userdata backups, usage caches v4 through v9, native CLI logs, and
 archived Codex transcripts, including `.jsonl.zst` files. It requires Python 3.9+
-and `zstd` for compressed transcripts. Source stores remain read-only. The archive
+and `zstd` for compressed transcripts. Source stores remain read-only. A T3 database
+that cannot be read or parsed is skipped and listed in the receipt's `skippedSources`,
+and the other sources still import. The archive
 contains timestamps, identifiers, counts, and source paths. It contains no prompts
-or credentials. Existing archives receive a SQLite backup before each import.
+or credentials. Before the first import of each São Paulo day, an existing archive is
+copied to a dated `.before-YYYYmmdd.sqlite` backup, and the newest three dated copies
+are kept. The archive uses SQLite WAL mode, so readers continue during an import.
 Unchanged transcripts are skipped on subsequent runs.
 
 Performance combines this archive with current T3 projections. Execution IDs remove
@@ -249,8 +253,9 @@ Cached calls without preserved execution boundaries contribute tokens and calend
 activity, but do not create agents or durations. Native-only token coverage is
 marked partial. Legacy T3 turns without a recoverable native identity are excluded
 from the execution count to avoid counting the same CLI execution again. The import
-receipt reports these exclusions. Run the importer again to refresh direct CLI
-history; current T3 activity continues to update without another import.
+receipt reports these exclusions. The macOS service runs the importer every 15 minutes
+(see `docs/macos-app.md`); elsewhere, run it again to refresh direct CLI history.
+Current T3 activity continues to update without another import.
 
 Run `python3 scripts/import-codexbar-history.py --help` to recover CodexBar quota
 history. This import uses recorded capture times and percentages. It links a Codex

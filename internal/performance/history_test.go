@@ -3,12 +3,16 @@ package performance
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
 	"slices"
 	"testing"
 	"time"
+
+	"modernc.org/sqlite"
 )
 
 func TestImportedActivityDeduplicatesTurnsAndTokensAcrossMidnight(t *testing.T) {
@@ -105,6 +109,132 @@ func TestReadActivityWorksWithoutT3AndDoesNotModifyArchive(t *testing.T) {
 	after, _ := os.ReadFile(path)
 	if string(before) != string(after) || report.AvailableFrom != "2026-08-28" || report.Providers[1].Days[0].Tokens != 110 {
 		t.Fatalf("archive read: %+v", report)
+	}
+}
+
+func historyTokens(t *testing.T, path string) int64 {
+	t.Helper()
+	report, err := ReadActivity(context.Background(), filepath.Join(t.TempDir(), "missing"), path, time.Date(2026, 10, 27, 15, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var tokens int64
+	for _, day := range report.Providers[1].Days {
+		tokens += day.Tokens
+	}
+	return tokens
+}
+
+func TestReadActivityReadsWALHistoryDuringAndAfterImports(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "performance-history.sqlite")
+	writer, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writer.SetMaxOpenConns(1)
+	_, err = writer.Exec(`PRAGMA journal_mode=WAL;
+		CREATE TABLE executions (id,provider,session_id,started_ms,completed_ms,input_tokens,output_tokens,partial,source);
+		CREATE TABLE usage_events (provider,session_id,at_ms,input_tokens,output_tokens);
+		INSERT INTO usage_events VALUES ('codex','s',1787924109699,100,10)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx, err := writer.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(`INSERT INTO usage_events VALUES ('codex','s',1787924109699,1000,0)`); err != nil {
+		t.Fatal(err)
+	}
+	if tokens := historyTokens(t, path); tokens != 110 {
+		t.Fatalf("read during an open import transaction: %d tokens", tokens)
+	}
+	if err = tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if err = writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for _, suffix := range []string{"-wal", "-shm"} {
+		if _, errStat := os.Stat(path + suffix); !os.IsNotExist(errStat) {
+			t.Fatalf("writer left %s behind: %v", suffix, errStat)
+		}
+	}
+	if tokens := historyTokens(t, path); tokens != 1110 {
+		t.Fatalf("read after the import closed: %d tokens", tokens)
+	}
+}
+
+// The last writer to close a WAL database holds its exclusive lock while it
+// checkpoints, as the importer does at the end of every run.
+func TestReadsWaitWhileAWriterLocksTheDatabase(t *testing.T) {
+	for _, source := range []struct {
+		name, schema string
+		read         func(t *testing.T, path string)
+	}{
+		{"t3", `CREATE TABLE orchestration_v2_projection_provider_threads (provider_thread_id, thread_id, provider, payload_json);
+			CREATE TABLE orchestration_v2_projection_provider_turns (provider_thread_id, thread_id, started_at, completed_at, payload_json, provider_turn_id)`,
+			func(t *testing.T, path string) {
+				if _, err := ReadT3(context.Background(), path, time.Now()); err != nil {
+					t.Fatal(err)
+				}
+			}},
+		{"history", `CREATE TABLE executions (id,provider,session_id,started_ms,completed_ms,input_tokens,output_tokens,partial,source);
+			CREATE TABLE usage_events (provider,session_id,at_ms,input_tokens,output_tokens)`,
+			func(t *testing.T, path string) { historyTokens(t, path) }},
+	} {
+		t.Run(source.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "source.sqlite")
+			writer, err := sql.Open("sqlite", path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			writer.SetMaxOpenConns(1)
+			if _, err = writer.Exec(`PRAGMA journal_mode=WAL;` + source.schema + `; PRAGMA locking_mode=EXCLUSIVE; BEGIN EXCLUSIVE`); err != nil {
+				t.Fatal(err)
+			}
+			time.AfterFunc(100*time.Millisecond, func() { _ = writer.Close() })
+			source.read(t, path)
+		})
+	}
+}
+
+// commit_import stands in for an import that commits while the proxy reads the
+// history. The executions view below calls it from inside the first query.
+func init() {
+	sqlite.MustRegisterScalarFunction("commit_import", 1, func(_ *sqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
+		db, err := sql.Open("sqlite", args[0].(string))
+		if err != nil {
+			return nil, err
+		}
+		_, err = db.Exec(`INSERT OR IGNORE INTO usage_events VALUES ('late','codex','s',1787924109699,1000,0)`)
+		return int64(1), errors.Join(err, db.Close())
+	})
+}
+
+func TestReadActivityDoesNotMixImportGenerations(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "performance-history.sqlite")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec(`PRAGMA journal_mode=WAL;
+		CREATE TABLE imported_executions (id,provider,session_id,started_ms,completed_ms,input_tokens,output_tokens,partial,source);
+		CREATE TABLE usage_events (id PRIMARY KEY,provider,session_id,at_ms,input_tokens,output_tokens);
+		INSERT INTO imported_executions VALUES ('e','codex','s',1787924100000,1787924200000,NULL,NULL,0,'cli:codex');
+		INSERT INTO usage_events VALUES ('early','codex','s',1787924109699,100,10);
+		CREATE VIEW executions AS SELECT * FROM imported_executions WHERE commit_import(` + "'" + path + "'" + `)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if tokens := historyTokens(t, path); tokens != 110 {
+		t.Fatalf("one read mixed two import generations: %d tokens", tokens)
+	}
+	if tokens := historyTokens(t, path); tokens != 1110 {
+		t.Fatalf("the committed import is missing from the next read: %d tokens", tokens)
 	}
 }
 
