@@ -20,7 +20,7 @@ import urllib.request
 REPO = Path(__file__).resolve().parent.parent
 LABEL = 'com.byvict.cliproxyapi'
 RUNTIME = Path.home() / 'Library/Application Support/CLIProxyAPI'
-BUILD_ROOT = Path('/Volumes/Arquivos/cliproxyapi-build')
+BUILD_ROOT = Path.home() / 'Library/Caches/CLIProxyAPI-build'
 
 
 def run(*args, capture=False, check=True, cwd=REPO):

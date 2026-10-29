@@ -1,5 +1,9 @@
 # Local releases
 
+## 8.0.44-local.15
+
+- Build releases from `~/Library/Caches/CLIProxyAPI-build` on the internal disk and remove each panel build directory after its artifact is copied.
+
 ## 8.0.44-local.14
 
 - Run the service from `~/Library/Application Support/CLIProxyAPI` on the internal disk. The delegation observatory keeps its data on the SSD and the runtime links to its publication.
