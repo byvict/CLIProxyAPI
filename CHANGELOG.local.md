@@ -1,5 +1,9 @@
 # Local releases
 
+## 8.0.44-local.13
+
+- Draw the Antigravity Claude & GPT quota pool as an `Other` timeline lane directly below the Antigravity (Gemini) lane, with its own weekly balance, window, recorded readings and forecast.
+
 ## 8.0.44-local.12
 
 - Standardize the Antigravity quota card summary to show its plan as plain text without model-group quota bars.

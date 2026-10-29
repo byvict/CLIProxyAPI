@@ -2753,3 +2753,237 @@ diff --git a/src/features/quota/quotaTimelineModel.ts b/src/features/quota/quota
    /** Instant a window boundary falls on; all other boundaries derive from it. */
    anchorMs: number | null;
    /** Window length in hours. */
+diff --git a/src/features/quota/components/QuotaTimeline.tsx b/src/features/quota/components/QuotaTimeline.tsx
+--- a/src/features/quota/components/QuotaTimeline.tsx
++++ b/src/features/quota/components/QuotaTimeline.tsx
+@@ -40,7 +40,7 @@ import {
+   timelineSpan,
+   DAY_MS,
+ } from '../quotaTimelineModel';
+-import type { TimelineLane, TimelineMode } from '../quotaTimelineModel';
++import type { TimelineLane, TimelineLaneInput, TimelineMode } from '../quotaTimelineModel';
+ import type { QuotaFileEntry } from '../logic';
+ import type { QuotaCardState } from '../providers';
+ import styles from './QuotaTimeline.module.scss';
+@@ -107,16 +107,26 @@ export function QuotaTimeline({
+     () =>
+       entries
+         .filter((entry) => !entry.file.disabled)
+-        .map((entry) => ({
+-          name: getQuotaCacheKey(entry.file),
+-          credential: normalizeAuthIndex(entry.file.authIndex),
+-          displayName:
+-            entry.type === 'devin'
+-              ? getQuotaDisplayName(entry.file)
+-              : displayNameFor(entry.file.name),
+-          provider: entry.type,
+-          quota: quotaFor(entry),
+-        })),
++        .flatMap((entry): (TimelineLaneInput & { credential: string | null })[] => {
++          const input = {
++            name: getQuotaCacheKey(entry.file),
++            credential: normalizeAuthIndex(entry.file.authIndex),
++            displayName:
++              entry.type === 'devin'
++                ? getQuotaDisplayName(entry.file)
++                : displayNameFor(entry.file.name),
++            provider: entry.type,
++            quota: quotaFor(entry),
++          };
++          // Each Antigravity pool has its own limits, so the Claude & GPT pool
++          // gets its own lane right below the Gemini one.
++          return entry.type === 'antigravity'
++            ? [
++                { ...input, pool: 'gemini' },
++                { ...input, name: `${input.name}#third-party`, pool: 'third-party' },
++              ]
++            : [input];
++        }),
+     [entries, quotaFor, displayNameFor]
+   );
+ 
+@@ -175,12 +185,7 @@ export function QuotaTimeline({
+       windows.set(sample.windowId, samples);
+       byCredential.set(normalizeAuthIndex(sample.credential) ?? '', windows);
+     }
+-    const identities = new Map(
+-      entries.map((entry) => [
+-        getQuotaCacheKey(entry.file),
+-        normalizeAuthIndex(entry.file.authIndex),
+-      ])
+-    );
++    const identities = new Map(laneInputs.map((input) => [input.name, input.credential]));
+     return new Map(
+       lanes.map((lane) => {
+         const samples = (
+@@ -197,7 +202,7 @@ export function QuotaTimeline({
+         return [lane.name, quotaProjection(matchesReset ? samples : [], now)];
+       })
+     );
+-  }, [observations, entries, lanes, now]);
++  }, [observations, laneInputs, lanes, now]);
+ 
+   /** Weekly: one cell per day. Session: one per 6 hours. */
+   const cells = useMemo(() => {
+@@ -402,6 +407,10 @@ function Lane({
+   const color: ThemeColors =
+     resolvedTheme === 'dark' && colorSet.dark ? colorSet.dark : colorSet.light;
+   const providerLabel = getTypeLabel(t, lane.provider);
++  const laneLabel =
++    lane.pool === 'third-party'
++      ? t('quota_management.windows_other_pool', { defaultValue: 'Other' })
++      : providerLabel;
+   const iconSrc = getAuthFileIcon(lane.provider, resolvedTheme);
+   const weeklyPercent =
+     weeklyRemaining === null
+@@ -430,7 +439,7 @@ function Lane({
+             </span>
+           )}
+           <span className={styles.laneName} title={labelTitle}>
+-            {providerLabel} <span className={styles.laneQuota}>({weeklyPercent})</span>
++            {laneLabel} <span className={styles.laneQuota}>({weeklyPercent})</span>
+           </span>
+         </div>
+         {lane.recordedAtMs !== undefined && (
+diff --git a/src/features/quota/quotaTimelineModel.ts b/src/features/quota/quotaTimelineModel.ts
+--- a/src/features/quota/quotaTimelineModel.ts
++++ b/src/features/quota/quotaTimelineModel.ts
+@@ -26,6 +26,16 @@ export const TIMELINE_SPAN_DAYS: Record<TimelineMode, number> = {
+ /** The rolling window the session view projects, in hours. */
+ const SESSION_PERIOD_HOURS = 5;
+ 
++/**
++ * Antigravity bills Gemini and third-party (Claude & GPT) models from separate
++ * pools, each with its own 5-hour and weekly bucket.
++ */
++export type AntigravityPool = 'gemini' | 'third-party';
++
++/** Pool of a bucket id or `group/bucket` history id; third-party buckets are `3p-*`. */
++export const antigravityPoolOf = (windowId: string): AntigravityPool =>
++  /(^|\/)3p-/.test(windowId) ? 'third-party' : 'gemini';
++
+ /** A limit summarized in the lane's left column. */
+ export interface TimelineLimit {
+   label: string;
+@@ -50,6 +60,7 @@ export interface TimelineLane {
+   name: string;
+   displayName: string;
+   provider: QuotaProviderType;
++  pool?: AntigravityPool;
+   windowId?: string | null;
+   recordedAtMs?: number;
+   /** Instant a window boundary falls on; all other boundaries derive from it. */
+@@ -325,6 +336,8 @@ export interface TimelineLaneInput {
+   displayName: string;
+   provider: QuotaProviderType;
+   quota: { status?: string; retained?: { status?: string } } | undefined;
++  /** Antigravity pool to draw; without it every bucket competes for the lane. */
++  pool?: AntigravityPool;
+   /**
+    * Longest window period worth drawing, in hours — normally the visible span.
+    * A window longer than the whole view can't show a boundary, and a much
+@@ -348,12 +361,13 @@ const clampPercent = (value: number) => Math.min(100, Math.max(0, value));
+  * scheduled", which is the truth.
+  */
+ export function buildTimelineLane(input: TimelineLaneInput): TimelineLane {
+-  const { name, displayName, provider, maxPeriodHours } = input;
++  const { name, displayName, provider, pool, maxPeriodHours } = input;
+   const quota = input.quota?.retained ?? input.quota;
+   const empty: TimelineLane = {
+     name,
+     displayName,
+     provider,
++    pool,
+     anchorMs: null,
+     periodHours: null,
+     remaining: null,
+@@ -480,8 +494,8 @@ export function buildTimelineLane(input: TimelineLaneInput): TimelineLane {
+   }
+ 
+   if (provider === 'antigravity' || provider === 'plugin') {
+-    // Buckets live one level down, inside groups, and the groups are a display
+-    // concern the chart doesn't care about — flatten them.
++    // Buckets live one level down, inside groups. Flatten them and keep only the
++    // requested pool's buckets.
+     const buckets = (
+       (quota as { groups?: { id?: string; buckets?: AntigravityBucketLike[] }[] }).groups ?? []
+     )
+@@ -491,7 +505,11 @@ export function buildTimelineLane(input: TimelineLaneInput): TimelineLane {
+           historyId: `${group.id ?? ''}/${bucket.id ?? index}`,
+         }))
+       )
+-      .filter((bucket) => typeof bucket.resetAtMs === 'number');
++      .filter(
++        (bucket) =>
++          typeof bucket.resetAtMs === 'number' &&
++          (pool === undefined || antigravityPoolOf(bucket.historyId) === pool)
++      );
+     const chosen = pickLaneWindow(buckets, maxPeriodHours);
+     if (!chosen) return empty;
+ 
+diff --git a/src/i18n/locales/en.json b/src/i18n/locales/en.json
+--- a/src/i18n/locales/en.json
++++ b/src/i18n/locales/en.json
+@@ -1608,6 +1608,7 @@
+     "windows_mode_weekly": "Weekly",
+     "windows_mode_session": "5-hour",
+     "windows_credential": "Credential",
++    "windows_other_pool": "Other",
+     "windows_idle": "no window counting down",
+     "windows_empty_session": "No credentials on this page report a 5-hour quota window.",
+     "windows_legend_current": "current window",
+diff --git a/src/i18n/locales/ko.json b/src/i18n/locales/ko.json
+--- a/src/i18n/locales/ko.json
++++ b/src/i18n/locales/ko.json
+@@ -1608,6 +1608,7 @@
+     "windows_mode_weekly": "주간",
+     "windows_mode_session": "5시간",
+     "windows_credential": "자격 증명",
++    "windows_other_pool": "기타",
+     "windows_idle": "카운트다운 중인 윈도우 없음",
+     "windows_empty_session": "이 페이지의 어떤 자격 증명도 5시간 할당량 윈도우를 보고하지 않습니다.",
+     "windows_legend_current": "현재 윈도우",
+diff --git a/src/i18n/locales/ru.json b/src/i18n/locales/ru.json
+--- a/src/i18n/locales/ru.json
++++ b/src/i18n/locales/ru.json
+@@ -1611,6 +1611,7 @@
+     "windows_mode_weekly": "Неделя",
+     "windows_mode_session": "5 часов",
+     "windows_credential": "Учётные данные",
++    "windows_other_pool": "Другие",
+     "windows_idle": "нет активного окна",
+     "windows_empty_session": "Ни одни учётные данные на этой странице не предоставляют 5-часовое окно квоты.",
+     "windows_legend_current": "текущее окно",
+diff --git a/src/i18n/locales/vi.json b/src/i18n/locales/vi.json
+--- a/src/i18n/locales/vi.json
++++ b/src/i18n/locales/vi.json
+@@ -1559,6 +1559,7 @@
+     "windows_mode_weekly": "Tuần",
+     "windows_mode_session": "5 giờ",
+     "windows_credential": "Credential",
++    "windows_other_pool": "Khác",
+     "windows_idle": "không có cửa sổ nào đang đếm ngược",
+     "windows_empty_session": "Không có credential nào trên trang này báo cáo cửa sổ quota 5 giờ.",
+     "windows_legend_current": "cửa sổ hiện tại",
+diff --git a/src/i18n/locales/zh-CN.json b/src/i18n/locales/zh-CN.json
+--- a/src/i18n/locales/zh-CN.json
++++ b/src/i18n/locales/zh-CN.json
+@@ -1606,6 +1606,7 @@
+     "windows_mode_weekly": "按周",
+     "windows_mode_session": "5 小时",
+     "windows_credential": "凭证",
++    "windows_other_pool": "其他",
+     "windows_idle": "没有正在计时的窗口",
+     "windows_empty_session": "当前页面没有凭证提供 5 小时配额窗口。",
+     "windows_legend_current": "当前窗口",
+diff --git a/src/i18n/locales/zh-TW.json b/src/i18n/locales/zh-TW.json
+--- a/src/i18n/locales/zh-TW.json
++++ b/src/i18n/locales/zh-TW.json
+@@ -1634,6 +1634,7 @@
+     "windows_mode_weekly": "按週",
+     "windows_mode_session": "5 小時",
+     "windows_credential": "憑證",
++    "windows_other_pool": "其他",
+     "windows_idle": "沒有正在計時的視窗",
+     "windows_empty_session": "目前頁面沒有憑證提供 5 小時配額視窗。",
+     "windows_legend_current": "目前視窗",
