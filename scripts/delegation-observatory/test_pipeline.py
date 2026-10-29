@@ -15,6 +15,7 @@ from unittest import mock
 
 import export
 import extract
+import inventory
 import pipeline
 from storage import digest, dump, jsonl, latest, load, load_rows, writer
 
@@ -26,6 +27,63 @@ COMPLETED = "2026-10-22T00:01:00.000Z"
 
 def options(**kwargs):
     return argparse.Namespace(**kwargs)
+
+
+def work_dispatch(
+    request,
+    family,
+    started,
+    completed,
+    status="completed",
+    role="review",
+    run="run-1",
+    tokens=None,
+    model=None,
+    effort="xhigh",
+    kind="new_task",
+    task=None,
+    attempt=1,
+):
+    ident = request if request.startswith("node:") else "delegate-task:" + request
+    return {
+        "dispatch_id": ident,
+        "task_id": task or ident,
+        "observed_attempt_index_in_window": attempt,
+        "dispatch_kind": kind,
+        "dispatcher_thread_id": "parent",
+        "dispatcher_run_id": run,
+        "root_thread_id": "parent",
+        "project_id": "project",
+        "audit_overhead": False,
+        "role": role,
+        "status": status,
+        "started_at": "2026-10-22T" + started + ":00Z",
+        "completed_at": completed and "2026-10-22T" + completed + ":00Z",
+        "usage": {
+            "own": {
+                "inputTokens": tokens,
+                "outputTokens": None if tokens is None else 0,
+                "cachedInputTokens": None,
+                "cacheCreationTokens": None,
+                "reasoningTokens": None,
+            }
+        },
+        "child": {
+            "provider_instance_id": {"gpt": "codex", "claude": "claudeAgent"}.get(
+                family, family
+            ),
+            "model": model or family + "-model",
+            "family": family,
+            "settings": [{"id": "reasoningEffort", "value": effort}],
+        },
+        "dispatcher": {"family": "gpt"},
+        "root": {"family": "gpt"},
+    }
+
+
+def with_tier0(dispatches):
+    records = extract.tier0(dispatches)
+    return [dict(d, tier0=records[d["dispatch_id"]]) for d in dispatches]
 
 
 def fixture_database(path):
@@ -180,6 +238,242 @@ class PipelineTests(unittest.TestCase):
                     }
                 }
             )
+
+    def test_tier0_exports_mechanical_fields_without_changing_existing_ones(self):
+        _, _, envelope = self.generation()
+        raw = {
+            row["dispatch_id"]: row
+            for row in load_rows(self.seed_dir / "dispatches.jsonl")
+        }
+        for row in envelope["dispatches"]:
+            self.assertEqual(
+                {key: value for key, value in row.items() if key != "tier0"},
+                export.allow(raw[row["dispatch_id"]], export.DISPATCH_FIELDS),
+            )
+        child = next(row for row in envelope["dispatches"] if row["dispatch_id"] == "d")
+        self.assertEqual(
+            child["tier0"],
+            {
+                "status": "completed",
+                "interrupted": False,
+                "failed": False,
+                "replacement_of": None,
+                "replaced_by": None,
+                "retry_of": None,
+                "retried_by": None,
+                "latency_ms": 60000,
+                "own_input_tokens": None,
+                "own_cached_input_tokens": None,
+                "own_cache_creation_tokens": None,
+                "own_output_tokens": None,
+                "own_reasoning_tokens": None,
+                "provider": "fixture",
+                "model": "muse-wonder-full-1.0",
+                "family": "muse",
+                "effort": "high",
+                "dispatcher_family": "gpt",
+                "root_family": "gpt",
+            },
+        )
+        seat = next(
+            row
+            for row in envelope["summary"]["tier0_by_child_seat"]
+            if row["model"] == "muse-wonder-full-1.0"
+        )
+        self.assertEqual(
+            (seat["dispatched"], seat["own_input_tokens"], seat["median_latency_ms"]),
+            (1, None, 60000),
+        )
+
+    def test_tampered_or_extended_tier0_record_is_rejected(self):
+        _, _, original = self.generation()
+        for change, error in (
+            ({"failed": True}, "does not reproduce"),
+            ({"note": "free text"}, "Unexpected public schema field"),
+        ):
+            envelope = copy.deepcopy(original)
+            envelope["dispatches"][0]["tier0"].update(change)
+            with self.subTest(change=change), self.assertRaisesRegex(ValueError, error):
+                export.validate_envelope(self.rehash(envelope))
+
+    def test_tier0_links_replacements_and_retries_mechanically(self):
+        rows = [
+            work_dispatch("x-review-a-r1", "claude", "10:00", "10:09"),
+            work_dispatch("x-review-d-r1", "muse", "10:00", "10:05", status="failed"),
+            work_dispatch("x-review-d-r2", "claude", "10:06", "10:15"),
+            work_dispatch("y-review-b-r1", "grok", "11:00", "11:02", status="failed"),
+            work_dispatch("y-review-a-r2", "claude", "11:10", "11:20"),
+            work_dispatch("y-review-b-r2", "grok", "11:10", "11:20"),
+            work_dispatch("z-impl-r1", "gpt", "12:00", "12:30", status="interrupted"),
+            work_dispatch("z-impl-r2", "gpt", "12:20", "12:40"),
+            work_dispatch(
+                "t-run", "gpt", "13:00", "13:01", status="interrupted", task="t"
+            ),
+            work_dispatch(
+                "t-send",
+                "gpt",
+                "13:02",
+                "13:05",
+                kind="continuation",
+                task="t",
+                attempt=2,
+            ),
+        ]
+        links = {
+            ident.split(":")[-1]: {
+                k: v for k, v in record.items() if k in extract.LINK_FIELDS and v
+            }
+            for ident, record in extract.tier0(rows).items()
+        }
+        self.assertEqual(
+            links["x-review-d-r1"], {"replaced_by": "delegate-task:x-review-d-r2"}
+        )
+        self.assertEqual(
+            links["x-review-d-r2"], {"replacement_of": "delegate-task:x-review-d-r1"}
+        )
+        self.assertEqual(links["y-review-b-r2"], {})
+        self.assertEqual(links["z-impl-r2"], {})
+        self.assertEqual(links["t-send"], {"retry_of": "delegate-task:t-run"})
+        self.assertEqual(links["t-run"], {"retried_by": "delegate-task:t-send"})
+
+    def test_round_inventory_keeps_replacements_and_natives_with_their_panel(self):
+        dispatches = with_tier0(
+            [
+                work_dispatch("x-interrogate-a-r1", "claude", "10:00", "10:10"),
+                work_dispatch("x-interrogate-b-r1", "gpt", "10:00", "10:12"),
+                work_dispatch(
+                    "x-interrogate-c-r1", "muse", "10:00", "10:01", status="failed"
+                ),
+                work_dispatch(
+                    "x-interrogate-c-r2", "muse", "10:20", "10:30", run="run-2"
+                ),
+                work_dispatch("x-no-comments", "gpt", "10:00", "10:02"),
+                work_dispatch(
+                    "node:native-1", "grok", "10:00", "10:03", role="unknown"
+                ),
+                work_dispatch(
+                    "x-implementation-r1",
+                    "grok",
+                    "10:05",
+                    "10:30",
+                    role="implementation",
+                ),
+            ]
+        )
+        ident = {d["dispatch_id"].split(":")[-1]: d["dispatch_id"] for d in dispatches}
+        panel = ["x-interrogate-a-r1", "x-interrogate-b-r1", "x-interrogate-c-r2"]
+        envelope = {
+            "generation_id": "fixture",
+            "window": {"start_inclusive": START, "end_inclusive": END},
+            "dispatches": dispatches,
+            "attribution_coverage": [
+                {"dispatch_id": ident[name], "evaluable": True} for name in panel
+            ],
+            "panels": [
+                {
+                    "panel_id": "p",
+                    "complete": True,
+                    "dispatch_ids": [ident[name] for name in panel],
+                    "expected_families": ["claude", "gpt", "muse"],
+                }
+            ],
+        }
+        result = inventory.round_inventory(envelope)
+        panel_round = next(r for r in result["rounds"] if r["panel_ids"] == ["p"])
+        self.assertEqual(
+            sorted(m["dispatch_id"].split(":")[-1] for m in panel_round["members"]),
+            ["native-1", *panel[:2], "x-interrogate-c-r1", "x-interrogate-c-r2"],
+        )
+        self.assertEqual(
+            (panel_round["family_count"], panel_round["coverage_state"]), (4, "partial")
+        )
+        self.assertEqual(result["summary"]["four_family"]["partial"], 1)
+        self.assertEqual(len(result["rounds"]), 2)
+        check = result["known_complete_panels"]["panels"][0]
+        self.assertEqual(check["match"], "contained")
+        self.assertIn(
+            "one failed muse attempt that a panel member replaced", check["reason"]
+        )
+        self.assertIn("one completed grok member, a family outside", check["reason"])
+
+    def test_seat_coverage_compares_current_sheet_with_history(self):
+        sheet = """# quota claude: window=semanal used=15%
+feature, refactoring: inherit-parent
+session hook: on
+interrogate reviewers: claudeAgent/claude-opus-5-5 effort=xhigh, antigravity/gemini-4-argon thinking_level=medium, codex/gpt-6.1-sol reasoningEffort=xhigh
+"""
+        dispatches = with_tier0(
+            [
+                work_dispatch("a", "claude", "10:00", "10:05", model="claude-opus-5-5"),
+                work_dispatch(
+                    "b", "gpt", "10:00", "10:05", model="gpt-6.1-sol", effort="high"
+                ),
+            ]
+        )
+        envelope = {
+            "generation_id": "fixture",
+            "window": {},
+            "dispatches": dispatches,
+            "attribution_coverage": [],
+        }
+        result = inventory.seat_coverage(envelope, sheet, {"rounds": []})
+        coverage = {seat["model"]: seat["coverage"] for seat in result["seats"]}
+        self.assertEqual(
+            coverage,
+            {
+                "claude-opus-5-5": "model_and_effort",
+                "gemini-4-argon": "none",
+                "gpt-6.1-sol": "model_other_effort",
+            },
+        )
+        self.assertEqual(result["summary"]["multi_family_seats"], 3)
+        self.assertEqual(result["history_outside_current_seats"][0]["effort"], "high")
+
+    def test_quota_estimate_distributes_window_points_over_own_tokens(self):
+        dispatches = with_tier0(
+            [
+                work_dispatch("a", "gpt", "10:00", "11:00", tokens=300),
+                work_dispatch("b", "gpt", "10:00", "11:00", tokens=100),
+                work_dispatch("c", "grok", "10:00", "11:00"),
+            ]
+        )
+        envelope = {
+            "generation_id": "fixture",
+            "window": {
+                "start_inclusive": "2026-10-22T10:00:00Z",
+                "end_inclusive": "2026-10-22T13:00:00Z",
+            },
+            "dispatches": dispatches,
+        }
+
+        def reading(series, label, clock, remaining):
+            stamp = extract.timestamp("2026-10-22T" + clock + ":00Z").timestamp()
+            return (
+                series,
+                "codex",
+                "weekly",
+                label,
+                int(stamp * 1000),
+                remaining,
+                None,
+                168.0,
+            )
+
+        rows = [
+            reading(1, "collector", "10:00", 90.0),
+            reading(1, "collector", "11:00", 80.0),
+            reading(1, "collector", "12:00", 100.0),
+            reading(1, "other collector", "10:00", 90.0),
+            reading(1, "other collector", "11:00", 80.0),
+        ]
+        result = inventory.quota_estimate(envelope, rows)
+        self.assertTrue(result["estimate"])
+        points = {
+            row["dispatch_id"].split(":")[-1]: row["estimated_points"]["codex/all/168h"]
+            for row in result["dispatches"]
+        }
+        self.assertEqual(points, {"a": 7.5, "b": 2.5})
+        self.assertEqual(result["summary"]["points_observed"], 10.0)
 
     def test_rehashed_unknown_export_field_is_rejected(self):
         _, _, envelope = self.generation()

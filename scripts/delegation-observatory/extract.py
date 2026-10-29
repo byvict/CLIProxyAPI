@@ -6,10 +6,24 @@ import json
 import math
 import re
 import sqlite3
+import urllib.parse
 
 from storage import digest, dump, jsonl, timestamp
 
 P = "orchestration_v2_projection_"
+NONCOMPLETED = ("interrupted", "failed", "cancelled")
+EFFORT_OPTIONS = (
+    "reasoningEffort",
+    "reasoning_effort",
+    "effort",
+    "thinkingLevel",
+    "thinking_level",
+)
+MEMBER_TOKEN = re.compile(
+    r"[a-d]\d?|\d|s\d|claude|codex|gpt|grok|muse|opus|sol|cursor|nonmuse|retry|replacement|fallback"
+)
+REPLACEMENT_WINDOW = dt.timedelta(hours=2)
+LINK_FIELDS = ("replacement_of", "replaced_by", "retry_of", "retried_by")
 
 
 def family(model):
@@ -62,6 +76,7 @@ def identity(run=None, model=None, provider=None, driver=None, basis="unknown"):
                 "contextWindow",
                 "serviceTier",
                 "thinkingLevel",
+                "thinking_level",
                 "thinkingBudget",
                 "maxThinkingTokens",
                 "temperature",
@@ -78,6 +93,145 @@ def identity(run=None, model=None, provider=None, driver=None, basis="unknown"):
         "settings": safe,
         "basis": basis,
         "settings_unknown": opts is None,
+    }
+
+
+def effort(settings):
+    return next(
+        (
+            option["value"]
+            for option in settings or []
+            if option["id"] in EFFORT_OPTIONS
+        ),
+        None,
+    )
+
+
+def request_tokens(dispatch_id):
+    match = re.search(r"delegate-task:(.+)$", urllib.parse.unquote(dispatch_id))
+    if not match:
+        return None
+    tokens = [token for token in re.split(r"[-_]", match.group(1).lower()) if token]
+    return (
+        [token for token in tokens if not MEMBER_TOKEN.fullmatch(token)],
+        [token for token in tokens if MEMBER_TOKEN.fullmatch(token)],
+    )
+
+
+def attempt_change(before, after):
+    return (
+        before.startswith(after)
+        or after.startswith(before)
+        or re.sub(r"\d", "", before) == re.sub(r"\d", "", after)
+    )
+
+
+def same_request(before, after):
+    (before_stem, before_members), (after_stem, after_members) = before, after
+    if [m.rstrip("0123456789") or m for m in before_members[:1]] != [
+        m.rstrip("0123456789") or m for m in after_members[:1]
+    ]:
+        return False
+    changed = [(a, b) for a, b in zip(before_stem, after_stem) if a != b]
+    return len(before_stem) == len(after_stem) and (
+        not changed or (len(changed) == 1 and attempt_change(*changed[0]))
+    )
+
+
+def replaced_dispatch(after, siblings, requests, links):
+    request = requests[after["dispatch_id"]]
+    if request is None:
+        return None
+    started = timestamp(after["started_at"])
+    stems = [
+        requests[d["dispatch_id"]][0] for d in siblings if requests[d["dispatch_id"]]
+    ]
+    candidates = [
+        before
+        for before in siblings
+        if before is not after
+        and requests[before["dispatch_id"]]
+        and before["status"] in NONCOMPLETED
+        and before["completed_at"]
+        and links[before["dispatch_id"]]["replaced_by"] is None
+        and timestamp(before["completed_at"])
+        <= started
+        <= timestamp(before["started_at"]) + REPLACEMENT_WINDOW
+        and same_request(requests[before["dispatch_id"]], request)
+        and (
+            requests[before["dispatch_id"]][0] == request[0]
+            or stems.count(request[0]) == 1
+        )
+    ]
+    return max(
+        candidates,
+        key=lambda before: (
+            before["child"]["family"] == after["child"]["family"],
+            timestamp(before["completed_at"]),
+        ),
+        default=None,
+    )
+
+
+def tier0_record(dispatch, links):
+    own = dispatch["usage"]["own"]
+    return {
+        "status": dispatch["status"],
+        "interrupted": dispatch["status"] == "interrupted",
+        "failed": dispatch["status"] == "failed",
+        **links,
+        "latency_ms": (
+            round(
+                (
+                    timestamp(dispatch["completed_at"])
+                    - timestamp(dispatch["started_at"])
+                ).total_seconds()
+                * 1000
+            )
+            if dispatch["completed_at"]
+            else None
+        ),
+        "own_input_tokens": own["inputTokens"],
+        "own_cached_input_tokens": own["cachedInputTokens"],
+        "own_cache_creation_tokens": own["cacheCreationTokens"],
+        "own_output_tokens": own["outputTokens"],
+        "own_reasoning_tokens": own["reasoningTokens"],
+        "provider": dispatch["child"]["provider_instance_id"],
+        "model": dispatch["child"]["model"],
+        "family": dispatch["child"]["family"],
+        "effort": effort(dispatch["child"]["settings"]),
+        "dispatcher_family": dispatch["dispatcher"]["family"],
+        "root_family": dispatch["root"]["family"],
+    }
+
+
+def tier0(dispatches):
+    links = {d["dispatch_id"]: dict.fromkeys(LINK_FIELDS) for d in dispatches}
+    requests = {d["dispatch_id"]: request_tokens(d["dispatch_id"]) for d in dispatches}
+
+    def link(before, after, backward, forward):
+        links[after["dispatch_id"]][backward] = before["dispatch_id"]
+        links[before["dispatch_id"]][forward] = after["dispatch_id"]
+
+    tasks = collections.defaultdict(list)
+    threads = collections.defaultdict(list)
+    for d in dispatches:
+        tasks[d["task_id"]].append(d)
+        if d["dispatch_kind"] != "continuation":
+            threads[d["dispatcher_thread_id"]].append(d)
+    for attempts in tasks.values():
+        attempts.sort(key=lambda d: d["observed_attempt_index_in_window"])
+        for before, after in zip(attempts, attempts[1:]):
+            if before["status"] in NONCOMPLETED:
+                link(before, after, "retry_of", "retried_by")
+    for siblings in threads.values():
+        siblings.sort(key=lambda d: (timestamp(d["started_at"]), d["dispatch_id"]))
+        for after in siblings:
+            before = replaced_dispatch(after, siblings, requests, links)
+            if before:
+                link(before, after, "replacement_of", "replaced_by")
+    return {
+        d["dispatch_id"]: tier0_record(d, links[d["dispatch_id"]]) for d in dispatches
     }
 
 

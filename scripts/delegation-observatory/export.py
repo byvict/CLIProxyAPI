@@ -5,6 +5,7 @@ import hashlib
 import json
 import math
 
+from extract import tier0
 from metrics import summarize
 from storage import VERSION, digest, publication_file, timestamp
 
@@ -41,6 +42,28 @@ DISPATCH_FIELDS = [
     "evidence_ids",
     "root_relationship",
     "dispatcher_relationship",
+    "tier0",
+]
+TIER0_FIELDS = [
+    "status",
+    "interrupted",
+    "failed",
+    "replacement_of",
+    "replaced_by",
+    "retry_of",
+    "retried_by",
+    "latency_ms",
+    "own_input_tokens",
+    "own_cached_input_tokens",
+    "own_cache_creation_tokens",
+    "own_output_tokens",
+    "own_reasoning_tokens",
+    "provider",
+    "model",
+    "family",
+    "effort",
+    "dispatcher_family",
+    "root_family",
 ]
 CONTRIBUTION_FIELDS = [
     "contribution_id",
@@ -147,6 +170,7 @@ def public_envelope(
     dispatches, contributions, panels, coverage, evidence, sources, audits
 ):
     summary = summarize(dispatches, contributions, panels, coverage)
+    records = tier0(dispatches)
     attribution = summary["attribution"]
     not_applicable = set(attribution["application_not_applicable_dispatch_ids"])
     application_unknown = set(attribution["application_unknown_dispatch_ids"])
@@ -203,7 +227,10 @@ def public_envelope(
             for item in audits
         ],
         "summary": summary,
-        "dispatches": [allow(row, DISPATCH_FIELDS) for row in dispatches],
+        "dispatches": [
+            allow(dict(row, tier0=records[row["dispatch_id"]]), DISPATCH_FIELDS)
+            for row in dispatches
+        ],
         "contributions": public_contributions,
         "panels": [allow(row, PANEL_FIELDS) for row in panels],
         "attribution_coverage": public_coverage,
@@ -334,9 +361,10 @@ def validate_shape(envelope):
         closed(
             row,
             DISPATCH_FIELDS,
-            ["root", "dispatcher", "child", "usage", "evidence_ids"],
+            ["root", "dispatcher", "child", "usage", "evidence_ids", "tier0"],
         )
         strings(row["evidence_ids"])
+        closed(row["tier0"], TIER0_FIELDS)
         for key in ["root", "dispatcher", "child"]:
             identity = row[key]
             closed(
@@ -459,7 +487,10 @@ def validate_envelope(envelope):
     evidence = unique(envelope["evidence"], "evidence_id")
     coverage = unique(envelope["attribution_coverage"], "dispatch_id")
     causes = set()
+    records = tier0(list(dispatches.values()))
     for row in dispatches.values():
+        if row["tier0"] != records[row["dispatch_id"]]:
+            raise ValueError("Tier-0 record does not reproduce from published dispatch")
         if (
             not timestamp(window["start_inclusive"])
             <= timestamp(row["started_at"])
