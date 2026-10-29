@@ -3026,3 +3026,95 @@ diff --git a/src/features/quota/quotaTimelineModel.ts b/src/features/quota/quota
      if (!chosen) return empty;
 
      const resetCredits =
+diff --git a/src/features/quota/quotaTimelineModel.ts b/src/features/quota/quotaTimelineModel.ts
+--- a/src/features/quota/quotaTimelineModel.ts
++++ b/src/features/quota/quotaTimelineModel.ts
+@@ -69,6 +69,7 @@
+   periodHours: number | null;
+   /** Remaining percent reported for the window ending at `anchorMs`. */
+   remaining: number | null;
++  grokBotUsedPercent?: number;
+   limits: TimelineLimit[];
+   resetCredits: TimelineResetCredit[];
+ }
+@@ -472,6 +473,14 @@
+
+     const remaining =
+       typeof billing.usagePercent === 'number' ? clampPercent(100 - billing.usagePercent) : null;
++    const botUsage = billing.productUsage?.find((item) => item.product === 'GrokBot')?.usagePercent;
++    const grokBotUsedPercent =
++      remaining !== null &&
++      Number.isFinite(remaining) &&
++      typeof botUsage === 'number' &&
++      Number.isFinite(botUsage)
++        ? Math.min(100 - remaining, clampPercent(botUsage))
++        : undefined;
+
+     return {
+       ...empty,
+@@ -481,6 +490,7 @@
+       // length; weekly is what `periodType` already told us.
+       periodHours: billing.periodHours ?? 24 * 7,
+       remaining,
++      grokBotUsedPercent,
+       // Products contribute to the shared weekly usage, not independent limits.
+       limits: [],
+     };
+diff --git a/src/features/quota/components/QuotaTimeline.tsx b/src/features/quota/components/QuotaTimeline.tsx
+--- a/src/features/quota/components/QuotaTimeline.tsx
++++ b/src/features/quota/components/QuotaTimeline.tsx
+@@ -417,6 +417,7 @@
+       ? '—'
+       : `${new Intl.NumberFormat(i18n.resolvedLanguage, { maximumFractionDigits: 1 }).format(weeklyRemaining)}%`;
+   const labelTitle = `${lane.displayName}\n${t('quota_history.weekly_remaining', { value: weeklyPercent })}`;
++  const grokBotLabel = `${t('xai_quota.product_usage', { product: 'GrokBot' })} ${Math.round(lane.grokBotUsedPercent ?? 0)}%`;
+
+   return (
+     <div className={styles.lane} style={{ '--provider-accent': color.text } as CSSProperties}>
+@@ -489,10 +490,21 @@
+                 {/* Only the API-reported current window has meaningful usage;
+                     projected windows intentionally have no fill. */}
+                 {window.remaining !== null && (
+-                  <span
+-                    className={styles.windowFill}
+-                    style={{ width: `${100 - window.remaining}%` }}
+-                  />
++                  <>
++                    <span
++                      className={styles.windowFill}
++                      style={{ width: `${100 - window.remaining}%` }}
++                    />
++                    {lane.grokBotUsedPercent !== undefined && lane.grokBotUsedPercent > 0 && (
++                      <span
++                        className={styles.windowBotUsage}
++                        style={{ width: `${lane.grokBotUsedPercent}%` }}
++                        role="img"
++                        aria-label={grokBotLabel}
++                        title={grokBotLabel}
++                      />
++                    )}
++                  </>
+                 )}
+               </div>
+             );
+diff --git a/src/features/quota/components/QuotaTimeline.module.scss b/src/features/quota/components/QuotaTimeline.module.scss
+--- a/src/features/quota/components/QuotaTimeline.module.scss
++++ b/src/features/quota/components/QuotaTimeline.module.scss
+@@ -292,6 +292,17 @@
+   pointer-events: none;
+ }
+
++.windowBotUsage {
++  position: absolute;
++  inset: 0 auto 0 0;
++  background: repeating-linear-gradient(
++    120deg,
++    transparent 0 5px,
++    color-mix(in srgb, var(--bg-primary) 39%, transparent) 5px 6px,
++    transparent 6px 8px
++  );
++}
++
+ // Align the reset-credit arrow with the top edge of the quota window.
+ .resetCreditMarker {
+   position: absolute;

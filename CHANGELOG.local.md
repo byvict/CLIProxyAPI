@@ -1,5 +1,9 @@
 # Local releases
 
+## 8.0.44-local.22
+
+- Mark GrokBot consumption with subtle diagonal hatching inside the shared quota timeline bar. Keep GrokBuild consumption plain and omit the split when product usage is unavailable or the quota window has reset.
+
 ## 8.0.44-local.21
 
 - Restore exhaustion markers for every estimated quota window, including dates after the scheduled reset. Keep estimates provisional when the recent pace changes instead of hiding their markers.
