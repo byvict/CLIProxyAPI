@@ -22,21 +22,25 @@ If a change uses a pull request, target the fork's `main` and integrate the merg
 result before deployment. Push local changes to `fork`; keep `origin` for upstream
 reads. The upstream `dev` policy applies to the upstream repository.
 
-## Authorize the SSD once
+## Runtime location
 
-The runtime stays at `/Volumes/Arquivos/cliproxyapi-original`, including configuration,
-credentials, databases, and releases. macOS requires permission before a background
-service can access this removable volume.
+The runtime stays at `~/Library/Application Support/CLIProxyAPI` on the internal disk,
+including configuration, credentials, databases, and releases. It moved there from
+`/Volumes/Arquivos/cliproxyapi-original` on 2026-10-29 so that page reads do not wait
+on the shared external SSD.
+
+The delegation observatory keeps its data, control, and publication directories on the
+SSD under `/Volumes/Arquivos/cliproxyapi-original`. The runtime's `delegation-observatory`
+entry is a symbolic link to the published directory there. Without the SSD, only the
+delegation page is unavailable.
 
 Install the stable launcher with Go in `PATH`:
 
 ```sh
 bash scripts/install-macos-launcher.sh
-open -n "$HOME/Applications/CLIProxyAPI Service.app" --args --check /Volumes/Arquivos/cliproxyapi-original
+open -n "$HOME/Applications/CLIProxyAPI Service.app" --args --check "$HOME/Library/Application Support/CLIProxyAPI"
 ```
 
-Allow removable-volume access in the macOS prompt. Confirm **CLIProxyAPI Service >
-Volumes Removíveis** in **System Settings > Privacy & Security > Files and Folders**.
 The launcher does not require Full Disk Access.
 
 Verify access through launchd before stopping the manual installation:
@@ -49,7 +53,7 @@ Expect `Runtime access verified through launchd.` This command leaves the runnin
 proxy untouched. Deployment repeats this check before activation.
 
 The launcher lives in `~/Applications/CLIProxyAPI Service.app`. It starts the selected
-proxy binary on the SSD and forwards termination signals. Normal deployments retain
+proxy binary in the runtime and forwards termination signals. Normal deployments retain
 this launcher and its macOS privacy identity. The installer leaves an existing launcher
 in place. If its source needs an update, replace it explicitly and authorize it again.
 
@@ -71,7 +75,7 @@ build runs its tests, type checks, lint, and production build. A source change d
 the build aborts activation.
 
 Each release contains `cli-proxy-api`, `management.html`, and a `release.json` with
-SHA-256 checksums under `/Volumes/Arquivos/cliproxyapi-original/releases/`. The
+SHA-256 checksums under `~/Library/Application Support/CLIProxyAPI/releases/`. The
 `current` link selects the release. Redeployment checks artifacts against their
 manifest. A different commit requires a different `VERSION`.
 
@@ -114,10 +118,10 @@ Logs are `~/Library/Logs/CLIProxyAPI/launchd.stdout.log` and `launchd.stderr.log
 After installation, send `SIGTERM` to the LaunchAgent once. Confirm that launchd
 creates a new PID and that health still reports the expected commit.
 
-Keep the Mac powered on and awake, the SSD mounted, and the user logged in. Locking
-the screen is supported. After a restart, unlock FileVault and log in; launchd then
-starts the service. A reboot is a separate acceptance check and stays unverified
-until performed.
+Keep the Mac powered on and awake and the user logged in. Deployment and the
+delegation page also need the SSD mounted. Locking the screen is supported. After a
+restart, unlock FileVault and log in; launchd then starts the service. A reboot is a
+separate acceptance check and stays unverified until performed.
 
 The main panel's quota collection still requires an open panel. This installation
 does not change collection schedules, session lifetimes, or provider authentication.

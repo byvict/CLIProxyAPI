@@ -19,7 +19,7 @@ import urllib.request
 
 REPO = Path(__file__).resolve().parent.parent
 LABEL = 'com.byvict.cliproxyapi'
-RUNTIME = Path('/Volumes/Arquivos/cliproxyapi-original')
+RUNTIME = Path.home() / 'Library/Application Support/CLIProxyAPI'
 BUILD_ROOT = Path('/Volumes/Arquivos/cliproxyapi-build')
 
 
@@ -142,7 +142,7 @@ def check_access(runtime):
             if 'Runtime access verified.' in output.read_text():
                 return
             if errors.read_text():
-                raise RuntimeError('macOS denied runtime access. Allow Volumes Removíveis for CLIProxyAPI Service in System Settings > Privacy & Security > Files and Folders.')
+                raise RuntimeError('macOS denied runtime access. Allow CLIProxyAPI Service in System Settings > Privacy & Security > Files and Folders.')
             time.sleep(1)
         raise RuntimeError('Launcher access check did not complete; inspect Library/Logs/CLIProxyAPI.')
     finally:
